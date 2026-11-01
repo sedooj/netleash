@@ -1,0 +1,37 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Netleash contributors
+# netleash — status and self-test of the protection
+N=netleash
+STATUS=/var/run/$N/status.json
+HELPER=/usr/local/libexec/$N/netleash-exec
+J() { /usr/bin/plutil -extract "$1" raw -o - "$STATUS" 2>/dev/null; }
+
+case "${1:-status}" in
+status)
+  [ -f "$STATUS" ] || { echo "✗ daemon is not running (no $STATUS)"; exit 2; }
+  age=$(( $(date +%s) - $(J ts | cut -d. -f1) ))
+  [ "$age" -gt 5 ] && { echo "✗ daemon has not updated its status for ${age}s"; exit 2; }
+  [ "$(J armed)" = "true" ] || { echo "✗ protection is NOT armed: $(J note)"; exit 2; }
+  if [ "$(J vpnUp)" = "true" ]; then echo "● VPN connected ($(J iface)) — network allowed"
+  else echo "○ VPN disconnected — network of the protected app is blocked"; fi
+  echo "  protection armed, daemon pid $(J pid)";;
+test)
+  # Leak test: everything from the protected group except the VPN interface must fail.
+  "$0" status || exit 2
+  echo "→ through the VPN (must work if the VPN is up):"
+  "$HELPER" /usr/bin/curl -s -m 8 -o /dev/null -w "   api.anthropic.com HTTP %{http_code}\n" https://api.anthropic.com || echo "   no answer"
+  echo "→ forced through a physical interface (MUST be blocked):"
+  leak=""
+  for IF in $(ifconfig -l | tr ' ' '\n' | grep -E '^en[0-9]+$'); do
+    ip=$(ipconfig getifaddr "$IF" 2>/dev/null) || continue; [ -n "$ip" ] || continue
+    if "$HELPER" /usr/bin/curl -s -m 5 --interface "$IF" -o /dev/null https://1.1.1.1; then
+      echo "   ✗ LEAK through $IF!"; leak=1; else echo "   ✓ $IF is blocked"; fi
+  done
+  [ -z "$leak" ] && echo "✓ no leaks found" || { echo "✗ LEAKS FOUND"; exit 1; };;
+panic) exec sudo /usr/local/libexec/$N/panic.sh;;
+resume) sudo /usr/local/libexec/$N/resume.sh && "$0" status;;
+log) tail -f /var/log/$N.log;;
+run) shift; exec "$HELPER" "$@";;
+*) echo "usage: netleash [status|test|panic|resume|log|run <command...>]";;
+esac

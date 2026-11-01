@@ -1,0 +1,30 @@
+name: Feature request / support for another app or VPN
+description: Ask for something that is not supported yet
+labels: [enhancement, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Requests are collected here, but there is **no commitment or timeline**. The maintainer decides what is built.
+        Please search existing issues first and add a 👍 to an existing one instead of opening a duplicate.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What do you need?
+      options:
+        - Another protected application
+        - Another VPN / tunnel type
+        - Behaviour or UI change
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: Describe the app / VPN / behaviour and how it works on macOS
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why do you need it?
