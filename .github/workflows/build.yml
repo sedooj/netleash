@@ -13,7 +13,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Shell syntax
         run: for f in build.sh install.sh uninstall.sh scripts/*; do bash -n "$f"; done
       - name: Build
