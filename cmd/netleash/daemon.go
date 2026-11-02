@@ -72,8 +72,8 @@ func runDaemon() {
 	}
 	log.SetFlags(0)
 	d := &daemon{cfg: config.Load(config.ConfigPath), learned: loadLearned()}
-	d.logf("started (version %s); group %s, protected app %s, VPN app %s",
-		version, d.cfg.GroupName, d.cfg.ProtectedAppPath, d.cfg.VPNAppPath)
+	d.logf("started (version %s); group %s, protected apps %+v, VPN app %s",
+		version, d.cfg.GroupName, d.cfg.Apps(), d.cfg.VPNAppPath)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
@@ -277,7 +277,20 @@ func (d *daemon) applyAnchor(iface string, dnsLock bool) bool {
 // ---- processes ----
 
 func (d *daemon) inProtectedApp(p proc.Proc) bool {
-	return strings.HasPrefix(p.Path, d.cfg.ProtectedAppPath+"/")
+	return d.cfg.ProtectsExecutable(p.Path)
+}
+
+// Child commands keep their confined group even after the app exits or is removed from the list.
+func confinedProcessesRunning(procs []proc.Proc, gid uint32) bool {
+	if gid == 0 {
+		return false
+	}
+	for _, p := range procs {
+		if p.GID == gid {
+			return true
+		}
+	}
+	return false
 }
 
 // scanRogue kills every process of the protected app that is outside the confined group.
@@ -380,6 +393,7 @@ func (d *daemon) writeStatus(armed bool, iface, note string) {
 	data, err := json.Marshal(map[string]any{
 		"armed": armed, "vpnUp": iface != "", "iface": iface, "ts": float64(time.Now().UnixNano()) / 1e9,
 		"pid": os.Getpid(), "gid": d.gid.Load(), "note": note, "event": ev,
+		"protectedApps": d.cfg.Apps(),
 	})
 	if err != nil {
 		return
@@ -424,13 +438,7 @@ func (d *daemon) tick() {
 	}
 
 	mainOK := d.ensureMainRuleset()
-	appRunning := false
-	for _, p := range procs {
-		if p.GID == gid && d.inProtectedApp(p) {
-			appRunning = true
-			break
-		}
-	}
+	appRunning := confinedProcessesRunning(procs, gid)
 	armed := mainOK && d.applyAnchor(iface, iface == "" && appRunning)
 
 	if !armed {

@@ -37,9 +37,12 @@ clang -O2 -Wall -o "$OUT/netleash-spawn" cmd/netleash-spawn/spawn.c
 
 echo "==> Menu bar app"
 if command -v swiftc >/dev/null; then
+  echo "==> UI command regression tests"
+  app/test-command-runner.sh
   APP="$OUT/Netleash.app"
   mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-  swiftc -O -file-prefix-map "$PWD=." app/Netleash/main.swift -framework AppKit -framework UserNotifications -o "$APP/Contents/MacOS/Netleash"
+  swiftc -O -file-prefix-map "$PWD=." app/Netleash/*.swift -framework AppKit -framework UserNotifications -o "$APP/Contents/MacOS/Netleash"
+  swiftc -O -file-prefix-map "$PWD=." app/NetleashLauncher/main.swift -framework AppKit -o "$APP/Contents/Resources/NetleashLauncher"
   cat > "$APP/Contents/Info.plist" <<P
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -54,6 +57,12 @@ if command -v swiftc >/dev/null; then
  <key>CFBundleVersion</key><string>$VERSION</string>
  <key>CFBundleDevelopmentRegion</key><string>en</string>
  <key>CFBundleLocalizations</key><array><string>en</string><string>ru</string></array>
+ <key>CFBundleDocumentTypes</key><array><dict>
+  <key>CFBundleTypeName</key><string>Protected Application</string>
+  <key>CFBundleTypeRole</key><string>Viewer</string>
+  <key>LSHandlerRank</key><string>None</string>
+  <key>LSItemContentTypes</key><array><string>com.apple.application-bundle</string></array>
+ </dict></array>
  <key>LSUIElement</key><true/>
  <key>LSMinimumSystemVersion</key><string>13.0</string>
 </dict></plist>
@@ -63,7 +72,14 @@ P
   cp -R app/Netleash/Resources/ru.lproj "$APP/Contents/Resources/"
   mkdir -p "$APP/Contents/Resources/en.lproj"
   cp brand/png/menubar-up@2x.png brand/png/menubar-down@2x.png brand/png/menubar-warn@2x.png "$APP/Contents/Resources/"
+  # Keep first-run installation available when the user copies only Netleash.app.
+  mkdir -p "$APP/Contents/Resources/Installer"
+  cp "$OUT/netleash" "$OUT/netleash-exec" "$OUT/netleash-spawn" "$APP/Contents/Resources/Installer/"
+  cp packaging/*.sh "$APP/Contents/Resources/Installer/"
+  chmod 755 "$APP/Contents/Resources/Installer/"*
   codesign -f -s - "$APP" 2>/dev/null || true
+  echo "==> First-run installation payload check (installs nothing)"
+  "$APP/Contents/MacOS/Netleash" --check-installer
 else
   echo "swiftc not found: building without the menu bar app (the CLI and daemon still work)"
 fi

@@ -34,6 +34,16 @@ func main() {
 		cmd = os.Args[1]
 	}
 	switch cmd {
+	case "installer-start":
+		os.Exit(cmdStartInstaller(os.Args[2:]))
+	case "installer-check":
+		if err := checkInstallerLaunch(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println("OK: detached installer executed and both output streams were captured")
+	case "apps":
+		os.Exit(cmdApps(os.Args[2:]))
 	case "daemon":
 		runDaemon()
 	case "status":

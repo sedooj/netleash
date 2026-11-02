@@ -3,9 +3,10 @@
 # Copyright (C) 2026 Netleash contributors
 """Checks the menu bar app's translations: every L("…") key has a Russian string, nothing is unused or malformed."""
 import re, sys, os
+from pathlib import Path
 
 root = os.path.dirname(os.path.abspath(__file__))
-src = open(os.path.join(root, "Netleash/main.swift"), encoding="utf-8").read()
+src = "\n".join(path.read_text(encoding="utf-8") for path in Path(root).rglob("*.swift"))
 strings = open(os.path.join(root, "Netleash/Resources/ru.lproj/Localizable.strings"), encoding="utf-8").read()
 
 def unesc(t): return t.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\')
