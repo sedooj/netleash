@@ -3,7 +3,7 @@
 Versions follow [Semantic Versioning](https://semver.org). The version of a release is the content of the `VERSION`
 file and the git tag `vX.Y.Z`; local builds are marked `X.Y.Z-dev+<commit>`.
 
-## Unreleased
+## 0.3.0 — 2026-11-04
 
 - Configurable protected app list: add Claude, Codex, or another original app bundle in the applications window, enable/disable
   protection per app, and launch from the Applications menu without making copies or changing application signatures.
