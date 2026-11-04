@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Netleash — make a Mac app use the network only through a VPN (kernel-level, fail-closed)</title>
+<meta name="description" content="Netleash is a free open-source macOS tool that lets chosen apps, such as Claude or Codex, reach the internet only through your VPN. If the VPN drops, the app is cut off in the kernel (pf) instantly; when it returns, the network returns.">
+<link rel="canonical" href="https://sedooj.github.io/netleash/">
+<link rel="alternate" hreflang="en" href="https://sedooj.github.io/netleash/">
+<link rel="alternate" hreflang="ru" href="https://sedooj.github.io/netleash/ru/">
+<link rel="alternate" hreflang="x-default" href="https://sedooj.github.io/netleash/">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Netleash — per-app VPN kill switch for macOS">
+<meta property="og:description" content="Confine selected macOS apps to a VPN tunnel at the kernel level. Fail-closed, open source (GPL-3.0).">
+<meta property="og:url" content="https://sedooj.github.io/netleash/">
+<meta property="og:image" content="https://sedooj.github.io/netleash/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="stylesheet" href="style.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Netleash","applicationCategory":"SecurityApplication","operatingSystem":"macOS 26 (Apple Silicon)","softwareVersion":"0.3.0","license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://sedooj.github.io/netleash/","downloadUrl":"https://github.com/sedooj/netleash/releases/latest","codeRepository":"https://github.com/sedooj/netleash","description":"Open-source macOS tool that confines selected applications' network access to a VPN tunnel using the pf firewall; fail-closed when the VPN drops.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+</script>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
+{"@type":"Question","name":"How do I make Claude (or any Mac app) use the internet only through a VPN?","acceptedAnswer":{"@type":"Answer","text":"Install Netleash, add the app in its window and launch it from Netleash. The app runs in a dedicated group and a pf firewall rule lets that group out only through the VPN's tunnel interface; everything else is blocked."}},
+{"@type":"Question","name":"What happens when the VPN disconnects?","acceptedAnswer":{"@type":"Answer","text":"The protected app loses the network in the same instant, because the allow rule is bound to the tunnel interface name and stops matching when the interface disappears. When the VPN returns, the network returns automatically."}},
+{"@type":"Question","name":"Is this a per-app kill switch for macOS?","acceptedAnswer":{"@type":"Answer","text":"Yes, for the apps you choose. Other apps are not affected and keep their normal connection."}},
+{"@type":"Question","name":"Which VPNs are supported?","acceptedAnswer":{"@type":"Answer","text":"Currently AmneziaVPN with its own Kill Switch turned off, on macOS 26 (Apple Silicon). Other VPNs are not validated yet."}}]}
+</script>
+</head>
+<body>
+<header><div class="wrap">
+  <a href="./" aria-label="Netleash"><img class="logo-light" src="logo.svg" alt="Netleash"><img class="logo-dark" src="logo-dark.svg" alt="Netleash"></a>
+  <nav><a href="#how">How it works</a><a href="#install">Install</a><a href="#faq">FAQ</a><a href="https://github.com/sedooj/netleash">GitHub</a><a href="ru/" hreflang="ru" lang="ru">Русский</a></nav>
+</div></header>
+<main class="wrap">
+<h1>Make a Mac app use the internet <em>only</em> through your VPN</h1>
+<p class="lead">Netleash is a free, open-source macOS tool that puts selected apps — Claude, Codex or any <code>.app</code> — on a network leash. They can reach the internet only through the VPN tunnel. If the VPN drops, the kernel cuts them off instantly; when it comes back, they reconnect on their own.</p>
+<div class="btns">
+  <a class="btn primary" href="https://github.com/sedooj/netleash/releases/latest">Download latest release</a>
+  <a class="btn" href="https://github.com/sedooj/netleash">View on GitHub</a>
+</div>
+<div class="note"><b>Unofficial, experimental, unaudited.</b> Not affiliated with Anthropic, OpenAI or Amnezia. It installs a root daemon and a setuid helper on your Mac — read the <a href="https://github.com/sedooj/netleash#disclaimer">disclaimer and limitations</a> first. Supported today: AmneziaVPN with its Kill Switch <b>off</b>, macOS 26, Apple Silicon.</div>
+
+<h2>Why</h2>
+<p>A normal VPN kill switch is all-or-nothing and often races the firewall it reloads. Sometimes you only need <em>one</em> app to never touch your real IP — for example an AI assistant with agents and a built-in browser — while the rest of your Mac keeps working normally. Netleash gives you that per-app kill switch without a Network Extension or a proxy.</p>
+<div class="grid">
+  <div class="card"><h3>Fail-closed</h3><p>The allow rule is tied to the tunnel interface name. No interface, no match, packets are dropped — even if the daemon has crashed.</p></div>
+  <div class="card"><h3>Instant, in the kernel</h3><p>Enforced by macOS <code>pf</code>, not by polling. No leak window when the VPN disappears.</p></div>
+  <div class="card"><h3>Automatic recovery</h3><p>When the VPN is back, the rule re-points to the new tunnel within about half a second.</p></div>
+  <div class="card"><h3>DNS leak protection</h3><p>VPN DNS is never queried over a physical interface; all DNS is blocked while the VPN is down and a protected app runs.</p></div>
+  <div class="card"><h3>Original apps untouched</h3><p>No copies, patches or renamed bundles. Optional signed desktop launchers keep the original icon.</p></div>
+  <div class="card"><h3>Open and verifiable</h3><p>GPL-3.0-or-later, checksummed releases with build provenance, Russian and English UI.</p></div>
+</div>
+
+<h2 id="how">How it works</h2>
+<p>Netleash starts the protected app in a dedicated group, <code>_netleash</code>. A <code>pf</code> anchor then (1) allows loopback, (2) allows TCP/UDP <b>only</b> through the VPN's <code>utunN</code> interface, and (3) blocks everything else. A root daemon notices the VPN tunnel and keeps the rule pointed at it; processes of the protected app started outside the launcher are terminated within about 50&nbsp;ms. Details and limitations are in the <a href="https://github.com/sedooj/netleash#how-it-works">README</a>.</p>
+
+<h2 id="install">Install</h2>
+<p>Read the script first if you prefer — option 2 in the <a href="https://github.com/sedooj/netleash#install">README</a> shows how to verify the checksum and build provenance.</p>
+<pre><code>curl -fsSL https://github.com/sedooj/netleash/releases/latest/download/get.sh | sh</code></pre>
+<p>Then open <b>Netleash</b>, add your app, launch it from the menu bar icon, and check:</p>
+<pre><code>netleash status   # is protection armed, is the VPN alive
+netleash test     # a forced connection via a physical interface must be blocked</code></pre>
+
+<h2>Requirements</h2>
+<table>
+<tr><th>VPN</th><td>AmneziaVPN, <b>Kill Switch off</b> (it reloads pf non-atomically and would open a leak window)</td></tr>
+<tr><th>System</th><td>macOS 26 (Tahoe), Apple Silicon</td></tr>
+<tr><th>Apps</th><td>Claude and Codex presets, or any original <code>.app</code> bundle</td></tr>
+<tr><th>Not covered</th><td>ICMP, apps launched outside Netleash (they are terminated), a malicious root process</td></tr>
+</table>
+
+<h2 id="faq">FAQ</h2>
+<details><summary>How do I make Claude use the internet only through a VPN on a Mac?</summary><p>Install Netleash, add Claude in its window and open Claude from Netleash. Claude and everything it launches then run in the protected group and can only use the VPN tunnel.</p></details>
+<details><summary>What happens when the VPN disconnects?</summary><p>The app loses the network at once. When the VPN is back, connections work again without restarting the app; a response interrupted mid-stream has to be resent.</p></details>
+<details><summary>Is it a per-app kill switch?</summary><p>Yes, for the apps you choose. Everything else keeps its normal connection.</p></details>
+<details><summary>Does it work with WireGuard, OpenVPN or other VPNs?</summary><p>Not yet validated. Today only AmneziaVPN is supported; see the <a href="https://github.com/sedooj/netleash/issues">issue tracker</a> to ask for others.</p></details>
+<details><summary>Is it safe?</summary><p>It is experimental and unaudited, and it installs privileged components. The code is small and public; read it, verify releases, and keep the <code>netleash panic</code> rollback in mind.</p></details>
+<details><summary>How do I uninstall it?</summary><p><code>sudo /usr/local/libexec/netleash/uninstall.sh</code></p></details>
+</main>
+<footer><div class="wrap">Netleash is free software under GPL-3.0-or-later. <a href="https://github.com/sedooj/netleash">Source</a> · <a href="https://github.com/sedooj/netleash/releases">Releases</a> · <a href="https://github.com/sedooj/netleash/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/sedooj/netleash/issues">Issues</a></div></footer>
+</body>
+</html>
