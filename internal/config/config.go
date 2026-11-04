@@ -7,15 +7,18 @@ package config
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Install layout. Everything is derived from Name so a fork can rename the project in one place.
 const (
-	Name       = "netleash"
-	LibexecDir = "/usr/local/libexec/" + Name
-	ConfigDir  = "/usr/local/etc/" + Name
-	StateDir   = "/var/run/" + Name
-	LogPath    = "/var/log/" + Name + ".log"
+	Name           = "netleash"
+	LibexecDir     = "/usr/local/libexec/" + Name
+	ConfigDir      = "/usr/local/etc/" + Name
+	StateDir       = "/var/run/" + Name
+	LogPath        = "/var/log/" + Name + ".log"
+	InstallLogPath = "/var/log/" + Name + "-install.log"
 
 	ConfigPath     = ConfigDir + "/config.json"
 	LearnedDNSPath = ConfigDir + "/learned-dns.json"
@@ -35,6 +38,8 @@ type Config struct {
 	GroupName string `json:"groupName"`
 	// ProtectedAppPath is the application whose network access is restricted.
 	ProtectedAppPath string `json:"protectedAppPath"`
+	// ProtectedApps replaces ProtectedAppPath when present, including an explicitly empty list.
+	ProtectedApps []ProtectedApp `json:"protectedApps"`
 	// VPNAppPath is the VPN application whose tunnel interface is the only permitted route.
 	VPNAppPath string `json:"vpnAppPath"`
 	// EnforceLauncherOnly kills protected-app processes that were not started through the launcher.
@@ -50,6 +55,45 @@ type Config struct {
 	// AutoDetectVPNDNS extends VPNDNSServers with private addresses from the system resolvers that have a host route
 	// via the VPN interface.
 	AutoDetectVPNDNS bool `json:"autoDetectVpnDns"`
+}
+
+// ProtectedApp describes an original app bundle. Omitted enabled means true.
+type ProtectedApp struct {
+	Path    string `json:"path"`
+	Enabled bool   `json:"enabled"`
+}
+
+func (a *ProtectedApp) UnmarshalJSON(data []byte) error {
+	type plain ProtectedApp
+	v := plain{Enabled: true}
+	if err := json.Unmarshal(data, &v); err != nil {
+		return err
+	}
+	*a = ProtectedApp(v)
+	return nil
+}
+
+// Apps preserves the legacy single-app configuration until an explicit list is saved.
+func (c Config) Apps() []ProtectedApp {
+	if c.ProtectedApps != nil {
+		return c.ProtectedApps
+	}
+	return []ProtectedApp{{Path: c.ProtectedAppPath, Enabled: true}}
+}
+
+// ProtectsExecutable matches bundle boundaries, never similarly named neighboring apps.
+func (c Config) ProtectsExecutable(path string) bool {
+	for _, a := range c.Apps() {
+		if a.Enabled && ValidAppPath(a.Path) && strings.HasPrefix(path, filepath.Clean(a.Path)+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidAppPath also keeps paths safe to exchange with the installer's line-based interface.
+func ValidAppPath(path string) bool {
+	return filepath.IsAbs(path) && strings.HasSuffix(filepath.Clean(path), ".app") && !strings.ContainsAny(path, "\x00\r\n")
 }
 
 // Default returns the configuration used when no config file exists.

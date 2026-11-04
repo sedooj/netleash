@@ -22,14 +22,20 @@ LABEL=org.netleash.daemon
 AGENT_LABEL=org.netleash.app
 GROUP=_netleash
 
-PROTECTED_APP="$(/usr/bin/plutil -extract protectedAppPath raw -o - /usr/local/etc/$N/config.json 2>/dev/null || true)"
-[ -n "$PROTECTED_APP" ] || PROTECTED_APP=/Applications/Claude.app
-APP_NAME="$(basename "$PROTECTED_APP" .app)"
+PROTECTED_APPS=()
+if [ -f /usr/local/etc/$N/config.json ]; then
+  while IFS= read -r app; do
+    [ -z "$app" ] || PROTECTED_APPS+=("$app")
+  done < <(./netleash apps paths)
+fi
 
 # PIDs of the protected app (the Squirrel updater is not part of it)
 app_pids() {
-  pgrep -f "$PROTECTED_APP/Contents/" 2>/dev/null | while read -r p; do
-    case "$(ps -o command= -p "$p" 2>/dev/null)" in *Squirrel.framework*) ;; *) echo "$p" ;; esac
+  # Compare literal executable prefixes, not regular expressions supplied by app paths.
+  ps -axww -o pid=,comm= | while read -r p executable; do
+    case "$executable" in
+      "$PROTECTED_APP"/Contents/*) case "$executable" in *Squirrel.framework*) ;; *) echo "$p" ;; esac ;;
+    esac
   done
 }
 # Is this installer itself running inside the protected app (e.g. in a terminal of Claude Code)? Then closing it would
@@ -50,7 +56,7 @@ close_protected_app() {
     return 1
   fi
   echo "Closing $APP_NAME ..."
-  launchctl asuser "$USER_UID" sudo -u "$USER_NAME" /usr/bin/osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
+  launchctl asuser "$USER_UID" sudo -u "$USER_NAME" /usr/bin/osascript -e 'on run argv' -e 'tell application (item 1 of argv) to quit' -e 'end run' "$PROTECTED_APP" >/dev/null 2>&1 || true
   for _ in $(seq 1 "${NETLEASH_CLOSE_WAIT:-25}"); do [ -z "$(app_pids)" ] && return 0; sleep 0.4; done
   app_pids | xargs kill -9 2>/dev/null || true
   sleep 0.5
@@ -60,9 +66,10 @@ close_protected_app() {
 
 echo "Netleash $(./netleash version | awk '{print $2}')"
 echo "This installs a root daemon and a setuid helper (see README: Disclaimer, Limitations)."
-echo "Supported setup: Claude.app + AmneziaVPN with its Kill Switch turned OFF, macOS 26, Apple Silicon."
-echo "If $APP_NAME is running, it is closed now and reopened through Netleash when the installation finishes."
-echo "Unsaved work in it (including a Claude Code session) is lost: save it first."
+echo "VPN: AmneziaVPN with its Kill Switch turned OFF. Other VPN providers are not validated."
+echo "Configured protected apps:"
+for app in ${PROTECTED_APPS[@]+"${PROTECTED_APPS[@]}"}; do echo "  $app"; done
+echo "Running protected apps are closed and reopened under protection. Save your work first."
 if [ "${1:-}" != "-y" ] && [ "${NETLEASH_YES:-}" != "1" ]; then
   read -r -p "Continue? [y/N] " a || a=n
   [ "$a" = y ] || { echo "Aborted."; exit 1; }
@@ -70,8 +77,11 @@ fi
 # keep going if the terminal disappears while the app (and with it possibly the terminal's window) is being closed
 trap '' HUP
 
-WAS_RUNNING=0
-if close_protected_app; then WAS_RUNNING=1; fi
+REOPEN_APPS=()
+for PROTECTED_APP in ${PROTECTED_APPS[@]+"${PROTECTED_APPS[@]}"}; do
+  APP_NAME="$(basename "$PROTECTED_APP" .app)"
+  if close_protected_app; then REOPEN_APPS+=("$PROTECTED_APP"); fi
+done
 
 # 1. Group
 if ! dscl . -read /Groups/$GROUP >/dev/null 2>&1; then
@@ -91,7 +101,7 @@ install -o root -g wheel -m 755 resume.sh $L/resume.sh
 install -o root -g wheel -m 755 uninstall.sh $L/uninstall.sh
 rm -f $L/netleashd                       # binary of the pre-Go versions
 ln -sf $L/netleash /usr/local/bin/netleash
-[ -f /usr/local/etc/$N/config.json ] || echo '{}' > /usr/local/etc/$N/config.json
+[ -f /usr/local/etc/$N/config.json ] || echo '{"protectedApps":[]}' > /usr/local/etc/$N/config.json
 chown root:wheel /usr/local/etc/$N/config.json; chmod 644 /usr/local/etc/$N/config.json
 codesign -f -s - $L/netleash $L/netleash-exec $L/netleash-spawn 2>/dev/null || true
 chmod 4755 $L/netleash-exec               # codesign must not strip the setuid bit
@@ -154,10 +164,15 @@ fi
 sleep 2
 echo; netleash status || true
 # `netleash update` unpacks the archive into a temporary directory of its own: remove it when done
-case "$PWD" in */netleash-update-*/netleash-darwin-arm64) U="$(dirname "$PWD")"; cd /; rm -rf "$U" ;; esac
-if [ "$WAS_RUNNING" = 1 ] && [ -d /Applications/Netleash.app ]; then
+case "$PWD" in */netleash-update-*/netleash-darwin-*|*/netleash-install-*/netleash-darwin-*) U="$(dirname "$PWD")"; cd /; rm -rf "$U" ;; esac
+if [ -n "${REOPEN_APPS[*]-}" ]; then
   for _ in $(seq 1 30); do netleash status >/dev/null 2>&1 && break; sleep 0.5; done
-  echo "Reopening $APP_NAME through Netleash ..."
+  for app in ${REOPEN_APPS[@]+"${REOPEN_APPS[@]}"}; do
+    echo "Reopening $(basename "$app" .app) through Netleash ..."
+    launchctl asuser "$USER_UID" sudo -u "$USER_NAME" "$L/netleash" apps launch "$app" </dev/null >>/var/log/netleash-launch.log 2>&1 &
+  done
+fi
+if [ -d /Applications/Netleash.app ]; then
   launchctl asuser "$USER_UID" sudo -u "$USER_NAME" /usr/bin/open -a /Applications/Netleash.app || true
 fi
-echo "Done. Open “Netleash” from /Applications (or the menu bar icon → Open Claude). Check the setup: netleash test"
+echo "Done. Open Netleash to manage apps, or use the menu bar icon → Applications to launch them. Check: netleash test"

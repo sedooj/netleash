@@ -4,11 +4,12 @@
 // icon, leak test, log viewer and emergency rollback. It makes no network decisions itself: it only reads the
 // daemon's status file and starts the protected app through the setuid helper.
 //
-//   Netleash              open the protected app (and show the icon if it is not shown yet)
+//   Netleash              show application settings (and the menu bar icon)
 //   Netleash --background only the icon (this is how it starts at login)
 
 import AppKit
 import UserNotifications
+import UniformTypeIdentifiers
 
 let installName = "netleash"
 let statusPath = "/var/run/\(installName)/status.json"
@@ -16,8 +17,7 @@ let libexec = "/usr/local/libexec/\(installName)"
 let helperPath = "\(libexec)/netleash-exec"
 let cliPath = "/usr/local/bin/netleash"
 let logPath = "/var/log/\(installName).log"
-let protectedBinary = "/Applications/Claude.app/Contents/MacOS/Claude"
-let protectedBundleID = "com.anthropic.claudefordesktop"
+let configPath = "/usr/local/etc/\(installName)/config.json"
 let agentLabel = "org.netleash.app"
 let agentPath = NSHomeDirectory() + "/Library/LaunchAgents/\(agentLabel).plist"
 let updateDailyKey = "updateCheckDaily"
@@ -29,6 +29,55 @@ let launchLog = NSHomeDirectory() + "/Library/Logs/Netleash-launch.log"
 func L(_ key: String, _ args: CVarArg...) -> String {
     let f = NSLocalizedString(key, comment: "")
     return args.isEmpty ? f : String(format: f, arguments: args)
+}
+
+// MARK: - Original application bundles
+
+struct ProtectedApplication: Equatable {
+    let path: String
+    let enabled: Bool
+    var url: URL { URL(fileURLWithPath: path) }
+    var bundle: Bundle? { Bundle(url: url) }
+    var name: String { (bundle?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
+        ?? (bundle?.object(forInfoDictionaryKey: "CFBundleName") as? String)
+        ?? url.deletingPathExtension().lastPathComponent }
+    var installed: Bool { bundle?.executableURL.map { FileManager.default.isExecutableFile(atPath: $0.path) } ?? false }
+    var running: Bool { NSWorkspace.shared.runningApplications.contains { $0.bundleURL?.resolvingSymlinksInPath().path == path } }
+    var status: String {
+        if !installed { return L("Not installed") }
+        if !enabled { return L("Protection off") }
+        switch readState() {
+        case .up: return running ? L("Running · VPN connected") : L("VPN connected")
+        case .down: return running ? L("Running · network blocked") : L("VPN disconnected — network blocked")
+        case .broken: return L("Protection unavailable")
+        }
+    }
+}
+
+func protectedApplications() -> [ProtectedApplication] {
+    let data = FileManager.default.contents(atPath: configPath)
+    let doc = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+    if let apps = doc["protectedApps"] as? [[String: Any]] {
+        return apps.compactMap { a in
+            guard let path = a["path"] as? String else { return nil }
+            return ProtectedApplication(path: path, enabled: a["enabled"] as? Bool ?? true)
+        }
+    }
+    return [ProtectedApplication(path: doc["protectedAppPath"] as? String ?? "/Applications/Claude.app", enabled: true)]
+}
+
+func daemonHasApplied(_ app: ProtectedApplication) -> Bool {
+    guard let data = FileManager.default.contents(atPath: statusPath),
+          let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let apps = d["protectedApps"] as? [[String: Any]] else { return false }
+    return apps.contains { $0["path"] as? String == app.path && $0["enabled"] as? Bool == true }
+}
+
+func shellQuote(_ value: String) -> String { "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'" }
+
+var installationReady: Bool {
+    [cliPath, helperPath, "\(libexec)/netleash", "\(libexec)/netleash-spawn"].allSatisfy { FileManager.default.isExecutableFile(atPath: $0) }
+        && FileManager.default.fileExists(atPath: configPath)
 }
 
 // MARK: - Protection state
@@ -100,18 +149,33 @@ func readState() -> State {
 
 // MARK: - Helpers
 
-/// Runs a command as root through the standard macOS administrator prompt.
-func runAsAdmin(_ cmd: String) -> String {
-    var err: NSDictionary?
-    let esc = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-    let r = NSAppleScript(source: "do shell script \"\(esc)\" with administrator privileges")?.executeAndReturnError(&err)
-    if let e = err { return L("Error: %@", "\(e[NSAppleScript.errorMessage] ?? e)") }
-    return r?.stringValue ?? L("Done")
+enum AdminResult {
+    case success(String)
+    case cancelled
+    case failure(String)
 }
 
-/// Runs a command as root, detached from this app (the command may close and restart this very app, as the installer does).
-func runAsAdminDetached(_ path: String, _ args: String, log: String) -> String {
-    runAsAdmin("nohup '\(path)' \(args) >>'\(log)' 2>&1 </dev/null &")
+/// Administrator cancellation is an ordinary outcome, never a failed operation or a successful install.
+func runAsAdmin(_ cmd: String) -> AdminResult {
+    var error: NSDictionary?
+    let escaped = cmd.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    guard let script = NSAppleScript(source: "do shell script \"\(escaped)\" with administrator privileges") else {
+        return .failure(L("Could not request administrator access."))
+    }
+    let result = script.executeAndReturnError(&error)
+    if let error {
+        if (error[NSAppleScript.errorNumber] as? NSNumber)?.intValue == -128 { return .cancelled }
+        return .failure("\(error[NSAppleScript.errorMessage] ?? error)")
+    }
+    return .success(result.stringValue ?? "")
+}
+
+func startInstaller(_ path: String) -> AdminResult {
+    let runner = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("netleash")
+    guard FileManager.default.isExecutableFile(atPath: runner.path) else {
+        return .failure(L("This copy is incomplete. Open Netleash from a complete release or rebuild the app."))
+    }
+    return runAsAdmin([runner.path, "installer-start", path].map(shellQuote).joined(separator: " "))
 }
 
 // MARK: - Settings stored for the app and the command line
@@ -152,7 +216,7 @@ func launchctl(_ args: [String]) {
     p.standardOutput = FileHandle.nullDevice
     p.standardError = FileHandle.nullDevice
     try? p.run()
-    p.waitUntilExit()
+    if p.isRunning { p.waitUntilExit() }
 }
 
 // MARK: - Toast: Netleash's own notification banner (used when macOS does not allow notifications for the app)
@@ -307,16 +371,25 @@ func spawnDisclaimed(_ path: String, _ args: [String]) -> pid_t? {
 final class App: NSObject, NSApplicationDelegate {
     let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     let header = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    let testItem = NSMenuItem(title: L("Run leak test…"), action: nil, keyEquivalent: "")
+    let testItem = NSMenuItem(title: L("Test network protection…"), action: nil, keyEquivalent: "")
     let updateItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")   // visible only when an update is known
+    let appsMenu = NSMenu()
     var settings: SettingsWindow?
+    var applications: ApplicationsWindow?
+    var logWindow: LogWindow?
+    var testingProtection = false
+    var installingProtection = false
+    var installationTimer: Timer?
+    var installationNotice: String?
     var availableUpdate: String?   // set when a newer release is known
     var last = ""
     let background = CommandLine.arguments.contains("--background")
 
     func applicationDidFinishLaunching(_ n: Notification) {
-        Notifier.shared.setup()
+        if installationReady { Notifier.shared.setup() }
         let menu = NSMenu()
+        menu.autoenablesItems = false
+        appsMenu.autoenablesItems = false
         header.isEnabled = false
         menu.addItem(header)
         let ver = NSMenuItem(title: "Netleash \(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?")", action: nil, keyEquivalent: "")
@@ -325,7 +398,10 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         updateItem.action = #selector(updateFromMenu); updateItem.target = self; updateItem.isHidden = true
         menu.addItem(updateItem)
-        add(menu, L("Open Claude"), #selector(openProtectedApp))
+        let appsItem = NSMenuItem(title: L("Applications"), action: nil, keyEquivalent: "")
+        appsItem.submenu = appsMenu
+        menu.addItem(appsItem)
+        rebuildApplicationsMenu()
         menu.addItem(.separator())
         testItem.action = #selector(testLeaks); testItem.target = self; menu.addItem(testItem)
         add(menu, L("Show log"), #selector(showLog))
@@ -341,13 +417,24 @@ final class App: NSObject, NSApplicationDelegate {
         Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in self?.refresh() }
         Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in self?.dailyCheckIfDue() }
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in self?.dailyCheckIfDue() }
-        if !background { openProtectedApp() }
+        if !background {
+            if CommandLine.arguments.contains("--settings") { openSettings() } else { openApplications() }
+        }
     }
 
     /// The app was opened again (Dock, Spotlight, double click) while the icon is already running.
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        openProtectedApp()
+        openApplications()
         return false
+    }
+
+    /// Desktop launchers send a bundle URL through LaunchServices, including when Netleash is already running.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        var opened = Set<String>()
+        for url in urls where url.isFileURL && url.pathExtension == "app" {
+            let path = url.resolvingSymlinksInPath().path
+            if opened.insert(path).inserted { openProtectedApp(path) }
+        }
     }
 
     func add(_ menu: NSMenu, _ title: String, _ sel: Selector, key: String = "") {
@@ -358,9 +445,11 @@ final class App: NSObject, NSApplicationDelegate {
 
     func refresh() {
         handleEvents()
+        testItem.isEnabled = canTestProtection
+        settings?.refreshAvailability()
         let s = readState()
-        header.title = s.title
-        item.button?.toolTip = s.title
+        header.title = installationReady ? s.title : L("Netleash is not installed")
+        item.button?.toolTip = header.title
         let key = s.symbol + s.title
         guard key != last else { return }
         last = key
@@ -379,12 +468,69 @@ final class App: NSObject, NSApplicationDelegate {
     // MARK: Actions
 
     /// Starts the protected app under protection (or brings an already running one to the front).
-    @objc func openProtectedApp() {
-        if let r = NSRunningApplication.runningApplications(withBundleIdentifier: protectedBundleID).first {
+    func rebuildApplicationsMenu() {
+        appsMenu.removeAllItems()
+        let configured = FileManager.default.fileExists(atPath: configPath) ? protectedApplications() : []
+        for a in configured where a.enabled {
+            let row = NSMenuItem(title: L("Open %@", a.name), action: #selector(openConfiguredApp(_:)), keyEquivalent: "")
+            row.target = self
+            row.representedObject = a.path
+            row.isEnabled = canManageApplications && a.installed
+            row.toolTip = a.status
+            let icon = NSWorkspace.shared.icon(forFile: a.path)
+            icon.size = NSSize(width: 16, height: 16)
+            row.image = icon
+            appsMenu.addItem(row)
+        }
+        if appsMenu.items.isEmpty {
+            let row = NSMenuItem(title: L("No protected applications"), action: nil, keyEquivalent: "")
+            row.isEnabled = false
+            appsMenu.addItem(row)
+        }
+        appsMenu.addItem(.separator())
+        add(appsMenu, L("Manage applications…"), #selector(openApplications))
+    }
+
+    @objc func openConfiguredApp(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        openProtectedApp(path)
+    }
+
+    func openProtectedApp(_ path: String) {
+        guard requireInstallation() else { return }
+        guard let a = protectedApplications().first(where: { $0.path == path }) else {
+            alert(L("Could not start the app"), L("Add this application to Netleash before using its shortcut."), style: .warning)
+            return
+        }
+        guard a.enabled else {
+            alert(L("Protection is off"), L("Enable protection for %@ in Netleash before launching it from this shortcut.", a.name))
+            return
+        }
+        guard a.installed, let binary = a.bundle?.executableURL?.path else {
+            alert(L("Could not start the app"), L("Select an installed app in the applications window."), style: .critical)
+            return
+        }
+        guard daemonHasApplied(a) else {
+            alert(L("Not started: protection is not active"), L("Check: netleash status"), style: .critical)
+            return
+        }
+        if case .broken = readState() {
+            alert(L("Not started: protection is not active"), L("Check: netleash status"), style: .critical)
+            return
+        }
+        launchProtectedApp(a, binary)
+    }
+
+    private func launchProtectedApp(_ a: ProtectedApplication, _ binary: String) {
+        if let r = NSWorkspace.shared.runningApplications.first(where: { $0.bundleURL?.resolvingSymlinksInPath().path == a.path }) {
+            guard processIsConfined(r.processIdentifier) else {
+                alert(L("Close the app first"), L("Save your work and quit %@ before enabling protection. Then launch it from Netleash.", a.name))
+                return
+            }
             r.activate()
             return
         }
-        guard let pid = spawnDisclaimed(helperPath, ["--disclaim", protectedBinary]) else {
+        guard let pid = spawnDisclaimed(helperPath, ["--disclaim", binary]) else {
             alert(L("Could not start the app"), L("Check the installation: netleash status"), style: .critical)
             return
         }
@@ -403,22 +549,44 @@ final class App: NSObject, NSApplicationDelegate {
         }
     }
 
+    var canManageApplications: Bool {
+        guard installationReady, !installingProtection else { return false }
+        if case .broken = readState() { return false }
+        return true
+    }
+
+    var canTestProtection: Bool {
+        guard installationReady, !testingProtection else { return false }
+        if case .broken = readState() { return false }
+        return true
+    }
+
     @objc func testLeaks() {
+        guard requireInstallation() else { return }
+        guard !testingProtection else { return }
+        guard canTestProtection else {
+            alert(L("Protection is not ready"), L("Start protection before running the network test."))
+            return
+        }
+        testingProtection = true
         testItem.title = L("Testing…")
-        testItem.isEnabled = false
+        refresh()
         DispatchQueue.global().async {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: cliPath)
-            p.arguments = ["test"]
-            let out = Pipe(); p.standardOutput = out; p.standardError = out
-            try? p.run()
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            p.waitUntilExit()
+            let result = runCommand(cliPath, ["test"], timeout: 45)
             DispatchQueue.main.async {
-                self.testItem.title = L("Run leak test…")
-                self.testItem.isEnabled = true
-                alert(p.terminationStatus == 0 ? L("No leaks found") : L("Leak test failed"),
-                      String(decoding: data, as: UTF8.self), style: p.terminationStatus == 0 ? .informational : .critical)
+                self.testingProtection = false
+                self.testItem.title = L("Test network protection…")
+                self.refresh()
+                if result.timedOut {
+                    alert(L("Network test timed out"), L("The test was stopped after 45 seconds. You can try again or open the log."), style: .warning)
+                } else if result.error != nil {
+                    alert(L("Could not run the network test"), L("Check the Netleash installation and try again."), style: .warning)
+                } else {
+                    let title = result.exitCode == 0 ? L("Network test completed") : (result.exitCode == 2 ? L("Network test incomplete") : L("Network test failed"))
+                    alert(title,
+                          result.output.isEmpty ? L("The command returned no result. Open the log for details.") : result.output,
+                          style: result.exitCode == 0 ? .informational : .warning)
+                }
             }
         }
     }
@@ -426,39 +594,120 @@ final class App: NSObject, NSApplicationDelegate {
     @objc func openNotificationSettings() {
         NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension")!)
     }
-    @objc func showLog() { NSWorkspace.shared.open(URL(fileURLWithPath: logPath)) }
+    @objc func showLog() {
+        if logWindow == nil { logWindow = LogWindow() }
+        logWindow?.show()
+    }
     @objc func quit() { NSApp.terminate(nil) }
 
     @objc func panic() {
+        guard requireInstallation() else { return }
         let a = NSAlert()
         a.messageText = L("Remove all protection?")
-        a.informativeText = L("The daemon will be stopped and the pf rules removed. The protected app will be able to use the network without the VPN until you choose “Restore protection”.")
+        a.informativeText = L("The daemon will be stopped and the pf rules removed. Protected apps will be able to use the network without the VPN until you choose “Restore protection”.")
         a.alertStyle = .warning
         a.addButton(withTitle: L("Cancel"))
         a.addButton(withTitle: L("Roll back"))
         NSApp.activate(ignoringOtherApps: true)
         guard a.runModal() == .alertSecondButtonReturn else { return }
-        alert(runAsAdmin("\(libexec)/panic.sh"))
+        administrativeAction("panic.sh")
     }
 
-    @objc func resume() { alert(runAsAdmin("\(libexec)/resume.sh")) }
+    @objc func resume() { if requireInstallation() { administrativeAction("resume.sh") } }
+
+    func administrativeAction(_ script: String) {
+        if case .failure(let message) = runAsAdmin(shellQuote("\(libexec)/\(script)")) {
+            alert(L("Could not change protection"), message, style: .warning)
+        }
+        refresh()
+        applications?.refresh()
+    }
 
     // MARK: Updates
 
     /// Runs `netleash update …` (through the VPN unless the user asked otherwise) and returns the parsed JSON.
     func runUpdate(_ args: [String], completion: @escaping ([String: Any]) -> Void) {
+        guard installationReady else {
+            completion(["error": L("Install Netleash before checking for updates.")])
+            return
+        }
         DispatchQueue.global().async {
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: cliPath)
-            p.arguments = ["update", "--json"] + args
-            let out = Pipe(); p.standardOutput = out; p.standardError = FileHandle.nullDevice
-            var result: [String: Any] = ["error": "could not run netleash"]
-            if (try? p.run()) != nil {
-                let data = out.fileHandleForReading.readDataToEndOfFile()
-                p.waitUntilExit()
-                if let j = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] { result = j }
+            let command = runCommand(cliPath, ["update", "--json"] + args, timeout: 120)
+            var result: [String: Any]
+            if command.timedOut {
+                result = ["error": L("The update request timed out. Try again later.")]
+            } else if command.error != nil {
+                result = ["error": L("Could not start the update check. Check the Netleash installation.")]
+            } else if let data = command.output.data(using: .utf8),
+                      let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+                result = json
+            } else {
+                result = ["error": L("The update command returned no readable result.")]
             }
             DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    @objc func openApplications() {
+        if applications == nil { applications = ApplicationsWindow(app: self) }
+        applications?.show()
+    }
+
+    @discardableResult func requireInstallation() -> Bool {
+        if installingProtection { openApplications(); return false }
+        if installationReady { return true }
+        openApplications()
+        return false
+    }
+
+    @objc func installNetleash() {
+        guard !installingProtection else { return }
+        let installer: URL
+        do { installer = try prepareInstaller() }
+        catch { alert(L("Installer not found"), error.localizedDescription, style: .warning); return }
+        // Updating can close configured apps. The first install starts with an empty app list.
+        if FileManager.default.fileExists(atPath: configPath), protectedApplications().contains(where: { $0.enabled }) {
+            let a = NSAlert()
+            a.messageText = L("Install Netleash?")
+            a.informativeText = L("This installs the background protection service and asks for your administrator password. Save your work in protected apps before updating. Netleash will reopen after installation.")
+            a.addButton(withTitle: L("Install")); a.addButton(withTitle: L("Cancel"))
+            guard a.runModal() == .alertFirstButtonReturn else { removePreparedInstaller(installer); return }
+        }
+        installingProtection = true
+        applications?.refresh()
+        switch startInstaller(installer.path) {
+        case .success(let job): trackInstallation(job, installer: installer)
+        case .cancelled: installingProtection = false; removePreparedInstaller(installer)
+        case .failure(let message):
+            installingProtection = false
+            removePreparedInstaller(installer)
+            alert(L("Installation could not start"), message, style: .warning)
+        }
+        applications?.refresh()
+    }
+
+    func trackInstallation(_ job: String, installer: URL? = nil) {
+        guard let pid = Int32(job.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
+            installingProtection = false
+            installationNotice = L("Installation did not complete. Open the log for details.")
+            return
+        }
+        installingProtection = true
+        installationNotice = nil
+        installationTimer?.invalidate()
+        installationTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            if kill(pid, 0) == 0 || errno == EPERM { return }
+            timer.invalidate()
+            self.installingProtection = false
+            if let installer { removePreparedInstaller(installer) }
+            if !self.canManageApplications {
+                self.installationNotice = L("Installation did not complete. Open the log for details.")
+                self.showLog()
+                self.logWindow?.sources.selectItem(at: 3)
+                self.logWindow?.refresh()
+            }
+            self.applications?.refresh()
         }
     }
 
@@ -506,7 +755,7 @@ final class App: NSObject, NSApplicationDelegate {
     func offerUpdate(current: String, latest: String, url: String?) {
         let a = NSAlert()
         a.messageText = L("Netleash %@ is available", latest)
-        a.informativeText = L("You have %@. The update is downloaded through the VPN and its SHA-256 checksum is verified; you are asked for your administrator password to install it. Claude is closed during the update and reopened afterwards (save your work first), and this menu bar app restarts.", current)
+        a.informativeText = L("You have %@. The update is downloaded through the VPN and its SHA-256 checksum is verified; you are asked for your administrator password to install it. Protected apps are closed during the update and reopened afterwards (save your work first), and this menu bar app restarts.", current)
         a.addButton(withTitle: L("Update"))
         a.addButton(withTitle: L("Release notes"))
         a.addButton(withTitle: L("Later"))
@@ -527,20 +776,23 @@ final class App: NSObject, NSApplicationDelegate {
                 alert(L("Update failed"), (r["error"] as? String) ?? L("unknown error"), style: .critical)
                 return
             }
-            // The installer closes Claude and restarts this app, so it runs detached and logs to a file.
-            let out = runAsAdminDetached(installer, "-y", log: "/var/log/netleash-update.log")
-            if out.hasPrefix(L("Error: %@", "")) || out.contains("User canceled") {
+            // The installer closes protected apps and restarts this app, so it runs detached and logs to a file.
+            switch startInstaller(installer) {
+            case .success(let job):
+                self.trackInstallation(job)
+                alert(L("Update started"), L("Protected apps will close and open again, and Netleash will restart in a few seconds. Progress: /var/log/netleash-install.log"))
+            case .cancelled:
                 self.setAvailableUpdate(self.availableUpdate)
-                alert(L("Update failed"), out, style: .critical)
-            } else {
-                alert(L("Update started"), L("Claude will close and open again, and this app will restart in a few seconds. Progress: /var/log/netleash-update.log"))
+            case .failure(let message):
+                self.setAvailableUpdate(self.availableUpdate)
+                alert(L("Update failed"), message, style: .warning)
             }
         }
     }
 
     func setDaily(_ on: Bool) {
         UserDefaults.standard.set(on, forKey: updateDailyKey)
-        if on { checkForUpdates(userInitiated: false) }
+        if on && installationReady { checkForUpdates(userInitiated: false) }
     }
 
     /// Opt-in: at most one silent check per day. The request goes through the VPN; if the VPN is down it is skipped.
@@ -556,123 +808,66 @@ final class App: NSObject, NSApplicationDelegate {
 
     var loginEnabled: Bool { FileManager.default.fileExists(atPath: agentPath) }
 
-    func setLogin(_ on: Bool) {
+    func setLogin(_ on: Bool) throws {
         let uid = String(getuid())
         if !on {
-            launchctl(["bootout", "gui/\(uid)/\(agentLabel)"])
-            try? FileManager.default.removeItem(atPath: agentPath)
+            if FileManager.default.fileExists(atPath: agentPath) { try FileManager.default.removeItem(atPath: agentPath) }
+            DispatchQueue.global().async { _ = runCommand("/bin/launchctl", ["bootout", "gui/\(uid)/\(agentLabel)"], timeout: 3) }
         } else {
             // Started through LaunchServices ("open"): macOS only registers an app for notifications when it is launched that way.
             let plist: [String: Any] = ["Label": agentLabel,
-                                        "ProgramArguments": ["/usr/bin/open", "-g", "-a", Bundle.main.bundlePath, "--args", "--background"],
+                                        "ProgramArguments": ["/usr/bin/open", "-g", "-a", "/Applications/Netleash.app", "--args", "--background"],
                                         "RunAtLoad": true]
-            try? FileManager.default.createDirectory(atPath: (agentPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            (plist as NSDictionary).write(toFile: agentPath, atomically: true)
+            try FileManager.default.createDirectory(atPath: (agentPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: URL(fileURLWithPath: agentPath), options: .atomic)
             // Not started now: the app is already running, the agent takes effect at the next login.
         }
     }
 }
 
+func processIsConfined(_ pid: pid_t) -> Bool {
+    guard let data = FileManager.default.contents(atPath: statusPath),
+          let d = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let gid = d["gid"] as? Int, gid > 0 else { return false }
+    let result = runCommand("/bin/ps", ["-o", "gid=", "-p", String(pid)], timeout: 2)
+    return result.exitCode == 0 && Int(result.output.trimmingCharacters(in: .whitespacesAndNewlines)) == gid
+}
+
 extension App: NSMenuDelegate {
-    func menuWillOpen(_ menu: NSMenu) {}
+    func menuWillOpen(_ menu: NSMenu) { rebuildApplicationsMenu() }
 }
 
-// MARK: - Settings window
-
-final class SettingsWindow: NSObject, NSWindowDelegate {
-    unowned let app: App
-    let window: NSWindow
-    let languagePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    let bannersCheck = NSButton(checkboxWithTitle: L("Show Netleash banners and notifications"), target: nil, action: nil)
-    let dailyCheck = NSButton(checkboxWithTitle: L("Check for updates daily (through the VPN)"), target: nil, action: nil)
-    let loginCheck = NSButton(checkboxWithTitle: L("Start at login"), target: nil, action: nil)
-    let updateStatus = NSTextField(labelWithString: "")
-
-    init(app: App) {
-        self.app = app
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 360),
-                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        super.init()
-        window.title = L("Netleash Settings")
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-
-        func section(_ title: String) -> NSTextField {
-            let t = NSTextField(labelWithString: title)
-            t.font = .boldSystemFont(ofSize: 13)
-            return t
+if CommandLine.arguments.count == 2, CommandLine.arguments[1] == "--check-installer" {
+    // Validate the self-contained first-run payload without requesting privileges or installing anything.
+    do {
+        let installer = try prepareInstaller()
+        let folder = installer.deletingLastPathComponent()
+        let complete = FileManager.default.fileExists(atPath: folder.appendingPathComponent("Netleash.app/Contents/Info.plist").path)
+        do { try checkInstallerTransport(installer) }
+        catch { removePreparedInstaller(installer); throw error }
+        removePreparedInstaller(installer)
+        guard complete else {
+            throw CocoaError(.fileNoSuchFile)
         }
-        func note(_ text: String) -> NSTextField {
-            let t = NSTextField(wrappingLabelWithString: text)
-            t.font = .systemFont(ofSize: 11)
-            t.textColor = .secondaryLabelColor
-            t.preferredMaxLayoutWidth = 400
-            return t
-        }
-
-        languagePopup.addItems(withTitles: [L("System default"), "English", "Русский"])
-        languagePopup.target = self; languagePopup.action = #selector(languageChanged)
-        bannersCheck.target = self; bannersCheck.action = #selector(bannersChanged)
-        dailyCheck.target = self; dailyCheck.action = #selector(dailyChanged)
-        loginCheck.target = self; loginCheck.action = #selector(loginChanged)
-        let notifBtn = NSButton(title: L("Notification settings…"), target: self, action: #selector(openNotifications))
-        let checkBtn = NSButton(title: L("Check for updates…"), target: self, action: #selector(checkNow))
-        let langRow = NSStackView(views: [NSTextField(labelWithString: L("Language")), languagePopup])
-        langRow.spacing = 10
-
-        let stack = NSStackView(views: [
-            section(L("Language")), langRow, note(L("The app restarts to apply the language. It also applies to the netleash command.")),
-            section(L("Notifications")), bannersCheck, notifBtn,
-            section(L("Updates")), dailyCheck, checkBtn, updateStatus,
-            section(L("General")), loginCheck,
-        ])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 18, right: 20)
-        stack.setCustomSpacing(16, after: stack.views[2])
-        stack.setCustomSpacing(16, after: notifBtn)
-        stack.setCustomSpacing(16, after: updateStatus)
-        window.contentView = stack
-        window.setContentSize(stack.fittingSize)
-    }
-
-    func show() {
-        refresh()
-        window.center()
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
-    }
-
-    func refresh() {
-        switch chosenLanguage { case "en": languagePopup.selectItem(at: 1); case "ru": languagePopup.selectItem(at: 2); default: languagePopup.selectItem(at: 0) }
-        bannersCheck.state = (UserDefaults.standard.object(forKey: bannersKey) as? Bool ?? true) ? .on : .off
-        dailyCheck.state = UserDefaults.standard.bool(forKey: updateDailyKey) ? .on : .off
-        loginCheck.state = app.loginEnabled ? .on : .off
-        updateStatus.stringValue = app.availableUpdate.map { L("Update available: %@…", $0) } ?? ""
-    }
-
-    @objc func languageChanged() {
-        let new = ["system", "en", "ru"][languagePopup.indexOfSelectedItem]
-        guard new != chosenLanguage else { return }
-        chosenLanguage = new
-        // Relaunch so the whole interface (menus, dialogs, banners) switches language.
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", "sleep 1; /usr/bin/open -n -g -a '\(Bundle.main.bundlePath)' --args --background"]
-        try? p.run()
-        NSApp.terminate(nil)
-    }
-    @objc func bannersChanged() { UserDefaults.standard.set(bannersCheck.state == .on, forKey: bannersKey) }
-    @objc func dailyChanged() { app.setDaily(dailyCheck.state == .on) }
-    @objc func loginChanged() { app.setLogin(loginCheck.state == .on) }
-    @objc func openNotifications() { app.openNotificationSettings() }
-    @objc func checkNow() {
-        updateStatus.stringValue = L("Checking…")
-        app.checkForUpdates(userInitiated: false) { [weak self] text in self?.updateStatus.stringValue = text }
+        print("OK: payload staged; detached installer executed through AppleScript; stdout/stderr captured; nothing installed")
+        exit(0)
+    } catch { fputs(error.localizedDescription + "\n", stderr); exit(1) }
+}
+if CommandLine.arguments.count == 4, CommandLine.arguments[1] == "--create-shortcut" {
+    // Scriptable shortcut creation; protection is checked by Netleash when the shortcut is opened.
+    _ = NSApplication.shared
+    NSApp.setActivationPolicy(.accessory)
+    do {
+        try createShortcut(for: ProtectedApplication(path: CommandLine.arguments[2], enabled: true),
+                           at: URL(fileURLWithPath: CommandLine.arguments[3]))
+        print(CommandLine.arguments[3])
+        exit(0)
+    } catch {
+        if ProcessInfo.processInfo.environment["NETLEASH_DEBUG_SHORTCUT"] == "1" { fputs("\(error as NSError)\n", stderr) }
+        fputs(error.localizedDescription + "\n", stderr)
+        exit(1)
     }
 }
-
 if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--l10n" {
     // Translation check: Netleash --l10n "Quit"   (the language follows the system, or: -AppleLanguages "(ru)")
     print(L(CommandLine.arguments[2]))
@@ -684,6 +879,8 @@ if CommandLine.arguments.count >= 3, CommandLine.arguments[1] == "--render-setti
     let holder = App()   // SettingsWindow keeps only an unowned reference
     let w = SettingsWindow(app: holder)
     w.refresh()
+    w.window.layoutIfNeeded()
+    w.window.contentView?.layoutSubtreeIfNeeded()
     if let v = w.window.contentView, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) {
         v.cacheDisplay(in: v.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: CommandLine.arguments[2]))

@@ -5,14 +5,23 @@ package i18n
 
 // ru maps English messages to Russian. Format verbs must match (checked by a test).
 var ru = map[string]string{
-	"✗ daemon is not running (no %s)":                              "✗ демон не запущен (нет %s)",
-	"✗ unreadable status file":                                     "✗ файл статуса не читается",
-	"✗ daemon has not updated its status for %ds":                  "✗ демон не обновлял статус %d с",
-	"✗ protection is NOT armed: %s":                                "✗ защита НЕ взведена: %s",
-	"● VPN connected (%s) — network allowed":                       "● VPN подключён (%s) — сеть разрешена",
-	"○ VPN disconnected — network of the protected app is blocked": "○ VPN отключён — сеть защищаемого приложения заблокирована",
-	"  protection armed, daemon pid %d":                            "  защита взведена, pid демона %d",
-	"→ through the VPN (must work if the VPN is up):":              "→ через VPN (должно работать, если VPN включён):",
+	"✗ could not run the protection helper: %s":                             "✗ не удалось запустить помощник защиты: %s",
+	"✗ could not list network interfaces: %v":                               "✗ не удалось получить сетевые интерфейсы: %v",
+	"✗ protection changed during the test; try again":                       "✗ во время проверки изменилось состояние защиты; повторите попытку",
+	"○ test incomplete: no usable physical interface or no VPN response":    "○ проверка неполная: нет доступного физического интерфейса или ответа через VPN",
+	"✓ no direct test connections succeeded (not a complete privacy audit)": "✓ прямые тестовые соединения не прошли (это не полный аудит приватности)",
+	"protection on":  "защита включена",
+	"protection off": "защита выключена",
+	"Administrator access is required to change protected applications.": "Для изменения защищаемых приложений нужны права администратора.",
+	"Quit the application before enabling protection: %s":                "Перед включением защиты закройте приложение: %s",
+	"✗ daemon is not running (no %s)":                                    "✗ демон не запущен (нет %s)",
+	"✗ unreadable status file":                                           "✗ файл статуса не читается",
+	"✗ daemon has not updated its status for %ds":                        "✗ демон не обновлял статус %d с",
+	"✗ protection is NOT armed: %s":                                      "✗ защита НЕ взведена: %s",
+	"● VPN connected (%s) — network allowed":                             "● VPN подключён (%s) — сеть разрешена",
+	"○ VPN disconnected — network of the protected app is blocked":       "○ VPN отключён — сеть защищаемого приложения заблокирована",
+	"  protection armed, daemon pid %d":                                  "  защита взведена, pid демона %d",
+	"→ through the VPN (must work if the VPN is up):":                    "→ через VPN (должно работать, если VPN включён):",
 	"   no answer": "   нет ответа",
 	"→ forced through a physical interface (MUST be blocked):": "→ принудительно через физический интерфейс (ДОЛЖНО быть заблокировано):",
 	"   ✗ LEAK through %s!":                                    "   ✗ УТЕЧКА через %s!",
@@ -53,6 +62,10 @@ usage: netleash <command>
   update [flags]      check for a newer release and install it (see: netleash update --help)
   log                 follow the daemon log
   run <command...>    run a command under the same network confinement
+  apps                list configured applications as JSON
+  apps launch <path>  launch an enabled original .app under protection
+  apps add <path>     add an application (sudo; quit it first)
+  apps enable|disable|remove <path>  change protection (sudo)
   version             print the version
   daemon              run the root daemon (started by launchd; not for manual use)
 `
@@ -67,6 +80,10 @@ usage: netleash <command>
   update [флаги]      проверить новый релиз и установить его (см.: netleash update --help)
   log                 следить за журналом демона
   run <команда...>    запустить команду под той же сетевой изоляцией
+  apps                список настроенных приложений в JSON
+  apps launch <путь>  запустить оригинальное .app под защитой
+  apps add <путь>     добавить приложение (sudo; сначала закройте его)
+  apps enable|disable|remove <путь>  изменить защиту (sudo)
   version             показать версию
   daemon              запустить демон root (запускается launchd; вручную не нужен)
 `
