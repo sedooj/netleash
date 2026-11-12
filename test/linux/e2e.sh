@@ -107,7 +107,9 @@ check "reconnected without restarting anything" bash -c 'netleash status | grep 
 check "traffic flows through the tunnel again" works
 
 echo "== launcher enforcement"
-as_user bash -c 'claude -s -m 20 -o /dev/null http://1.1.1.1 & wait $!'; rc=$?
+# The target never answers (the SYN is dropped), so the program is still running when the daemon's scan finds it:
+# a fast real server could finish within the ~50 ms before the scan and hide the check.
+as_user bash -c 'claude -s -m 20 -o /dev/null http://10.255.255.1/ & wait $!'; rc=$?
 check "claude started outside Netleash is killed (SIGKILL)" test $rc -eq 137
 check "the daemon logged it" grep -q "unprotected launch" /var/log/netleash.log
 
