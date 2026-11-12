@@ -97,8 +97,8 @@ func cmdUpdate(args []string) int {
 		}
 		return 1
 	}
-	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
-		return fail(errors.New(i18n.T("release archives are published only for darwin/arm64 (this is %s/%s)", runtime.GOOS, runtime.GOARCH)))
+	if !update.Supported(runtime.GOOS, runtime.GOARCH) {
+		return fail(errors.New(i18n.T("release archives are published only for darwin/arm64, linux/amd64 and linux/arm64 (this is %s/%s)", runtime.GOOS, runtime.GOARCH)))
 	}
 	fetch := update.Fetcher(confinedFetcher)
 	if *direct {

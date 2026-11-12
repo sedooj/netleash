@@ -33,7 +33,7 @@ var ru = map[string]string{
 	"GitHub answered %s for %s":    "GitHub ответил %s для %s",
 	"protection is not active: %s": "защита не активна: %s",
 	"could not reach GitHub through the VPN (is it connected?); use --direct to connect outside the VPN": "не удалось связаться с GitHub через VPN (он подключён?); используйте --direct, чтобы подключиться в обход VPN",
-	"release archives are published only for darwin/arm64 (this is %s/%s)":                               "архивы релизов публикуются только для darwin/arm64 (у вас %s/%s)",
+	"release archives are published only for darwin/arm64, linux/amd64 and linux/arm64 (this is %s/%s)":  "архивы релизов публикуются только для darwin/arm64, linux/amd64 и linux/arm64 (здесь %s/%s)",
 	"Netleash %s is up to date.":                  "Netleash %s — актуальная версия.",
 	"Update available: %s → %s":                   "Доступно обновление: %s → %s",
 	"Release notes: %s":                           "Описание релиза: %s",
@@ -44,6 +44,12 @@ var ru = map[string]string{
 	"Installer: %s":                               "Установщик: %s",
 	"unexpected archive layout":                   "неожиданная структура архива",
 	"installer failed":                            "установщик завершился с ошибкой",
+	"give an absolute path to the program or its directory (run without sudo to look it up in PATH)": "укажите абсолютный путь к программе или её каталогу (без sudo команда ищется в PATH)",
+	"this is a command-line profile: start the program with netleash run <command>":                  "это профиль консольной программы: запускайте её командой netleash run <команда>",
+	"command not found: %s": "команда не найдена: %s",
+	"Protecting the whole directory %s so that updates stay protected.": "Защищаю весь каталог %s, чтобы обновления программы оставались под защитой.",
+	"this program cannot be protected by path: %s":                      "эту программу нельзя защитить по пути: %s",
+	"netleash: command not found: %s":                                   "netleash: команда не найдена: %s",
 
 	usageMain:   usageMainRu,
 	usageUpdate: usageUpdateRu,
@@ -62,9 +68,11 @@ usage: netleash <command>
   update [flags]      check for a newer release and install it (see: netleash update --help)
   log                 follow the daemon log
   run <command...>    run a command under the same network confinement
+  shell               open a shell whose every command is confined
   apps                list configured applications as JSON
-  apps launch <path>  launch an enabled original .app under protection
+  apps launch <path>  launch an enabled original .app under protection (macOS)
   apps add <path>     add an application (sudo; quit it first)
+  apps add-cli <cmd>  protect a command-line program such as claude (sudo; quit it first)
   apps enable|disable|remove <path>  change protection (sudo)
   version             print the version
   daemon              run the root daemon (started by launchd; not for manual use)
@@ -80,9 +88,11 @@ usage: netleash <command>
   update [флаги]      проверить новый релиз и установить его (см.: netleash update --help)
   log                 следить за журналом демона
   run <команда...>    запустить команду под той же сетевой изоляцией
+  shell               открыть оболочку, в которой каждая команда изолирована
   apps                список настроенных приложений в JSON
-  apps launch <путь>  запустить оригинальное .app под защитой
+  apps launch <путь>  запустить оригинальное .app под защитой (macOS)
   apps add <путь>     добавить приложение (sudo; сначала закройте его)
+  apps add-cli <cmd>  защитить консольную программу, например claude (sudo; сначала закройте её)
   apps enable|disable|remove <путь>  изменить защиту (sudo)
   version             показать версию
   daemon              запустить демон root (запускается launchd; вручную не нужен)

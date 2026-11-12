@@ -10,12 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/sedooj/netleash/internal/config"
 	"github.com/sedooj/netleash/internal/i18n"
-	"github.com/sedooj/netleash/internal/netinfo"
 )
 
 var (
@@ -96,7 +96,7 @@ func cmdTest() int {
 		return 2
 	}
 	for _, i := range ifs {
-		if !netinfo.IsPhysicalInterface(i.Name) || i.Flags&net.FlagUp == 0 || !hasIPv4(i) {
+		if !isPhysicalInterface(i.Name) || i.Flags&net.FlagUp == 0 || !hasIPv4(i) {
 			continue
 		}
 		tested++
@@ -165,4 +165,27 @@ func execTool(path string, args ...string) {
 		fmt.Fprintln(os.Stderr, i18n.T("netleash: cannot run %s: %v", path, err))
 		os.Exit(127)
 	}
+}
+
+// cmdRun starts a command through the setuid helper. The helper does no PATH lookup, so a bare name is resolved here,
+// in the caller's own environment.
+func cmdRun(args []string) {
+	if !strings.Contains(args[0], "/") {
+		p, err := exec.LookPath(args[0])
+		if err != nil {
+			fmt.Fprintln(os.Stderr, i18n.T("netleash: command not found: %s", args[0]))
+			os.Exit(127)
+		}
+		args = append([]string{p}, args[1:]...)
+	}
+	execTool(helperPath, args...)
+}
+
+// cmdShell opens the user's shell inside the confinement: everything started from it is confined too.
+func cmdShell() {
+	sh := os.Getenv("SHELL")
+	if !filepath.IsAbs(sh) {
+		sh = "/bin/sh"
+	}
+	execTool(helperPath, sh)
 }

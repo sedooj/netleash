@@ -132,3 +132,21 @@ func TestExtractRejectsUnsafeArchives(t *testing.T) {
 		}
 	}
 }
+
+func TestSupportedPlatforms(t *testing.T) {
+	for goos, archs := range map[string][]string{"darwin": {"arm64"}, "linux": {"amd64", "arm64"}} {
+		for _, a := range archs {
+			if !Supported(goos, a) {
+				t.Errorf("%s/%s must be supported", goos, a)
+			}
+		}
+	}
+	for _, p := range [][2]string{{"darwin", "amd64"}, {"windows", "amd64"}, {"freebsd", "amd64"}, {"linux", "386"}} {
+		if Supported(p[0], p[1]) {
+			t.Errorf("%v must not be supported", p)
+		}
+	}
+	if AssetName("linux", "amd64") != "netleash-linux-amd64.tar.gz" {
+		t.Error("asset name")
+	}
+}

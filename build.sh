@@ -2,10 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Netleash contributors
 #
-# Builds the release layout into dist/netleash-darwin-<arch>/ and packs dist/netleash-darwin-<arch>.tar.gz.
-# Requires Go and (for the menu bar app) Xcode or the Command Line Tools. No sudo needed.
+# Builds the release layout into dist/netleash-<os>-<arch>/ and packs dist/netleash-<os>-<arch>.tar.gz.
+# Requires Go and (for the macOS menu bar app) Xcode or the Command Line Tools. No sudo needed.
 #   ./build.sh                       local build:   0.1.0-dev+<commit>
 #   NETLEASH_RELEASE=1 ./build.sh    release build: 0.1.0 (from the VERSION file)
+#   NETLEASH_OS=linux NETLEASH_ARCH=amd64|arm64 NETLEASH_KEEP_DIST=1 ./build.sh    Linux archive (cross-compiled; keeps dist/)
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -20,23 +21,32 @@ else
   git diff --quiet HEAD 2>/dev/null || VERSION="$VERSION.dirty"
 fi
 DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-case "$(uname -m)" in arm64) ARCH=arm64 ;; x86_64) ARCH=amd64 ;; *) echo "unsupported architecture"; exit 1 ;; esac
-NAME="netleash-darwin-$ARCH"
+OS="${NETLEASH_OS:-darwin}"
+case "$OS" in darwin|linux) ;; *) echo "unsupported OS: $OS"; exit 1 ;; esac
+if [ -n "${NETLEASH_ARCH:-}" ]; then ARCH="$NETLEASH_ARCH"
+else case "$(uname -m)" in arm64|aarch64) ARCH=arm64 ;; x86_64) ARCH=amd64 ;; *) echo "unsupported architecture"; exit 1 ;; esac; fi
+NAME="netleash-$OS-$ARCH"
 OUT="dist/$NAME"
-rm -rf dist && mkdir -p "$OUT"
+if [ "${NETLEASH_KEEP_DIST:-}" = "1" ]; then rm -rf "$OUT" "dist/$NAME.tar.gz"; else rm -rf dist; fi
+mkdir -p "$OUT"
 
-echo "==> Netleash $VERSION ($ARCH)"
+echo "==> Netleash $VERSION ($OS/$ARCH)"
 echo "==> Go binaries"
-export CGO_ENABLED=0 GOOS=darwin GOARCH="$ARCH"
-go test ./...
+export CGO_ENABLED=0 GOOS="$OS" GOARCH="$ARCH"
+# Tests run on the build machine; a cross-compiled target cannot execute them.
+(unset GOOS GOARCH; go test ./...)
 go build -trimpath -ldflags "-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.date=$DATE" -o "$OUT/netleash" ./cmd/netleash
 go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "$OUT/netleash-exec" ./cmd/netleash-exec
 
+if [ "$OS" = darwin ]; then
 echo "==> Spawn tool"
 clang -O2 -Wall -o "$OUT/netleash-spawn" cmd/netleash-spawn/spawn.c
+fi
 
 echo "==> Menu bar app"
-if command -v swiftc >/dev/null; then
+if [ "$OS" != darwin ]; then
+  echo "skipped (macOS only)"
+elif command -v swiftc >/dev/null; then
   echo "==> UI command regression tests"
   app/test-command-runner.sh
   APP="$OUT/Netleash.app"
@@ -84,11 +94,19 @@ else
   echo "swiftc not found: building without the menu bar app (the CLI and daemon still work)"
 fi
 
-cp packaging/install.sh packaging/uninstall.sh packaging/panic.sh packaging/resume.sh LICENSE "$OUT/"
+if [ "$OS" = darwin ]; then
+  cp packaging/install.sh packaging/uninstall.sh packaging/panic.sh packaging/resume.sh LICENSE "$OUT/"
+else
+  cp packaging/linux/install.sh packaging/linux/uninstall.sh packaging/linux/panic.sh packaging/linux/resume.sh LICENSE "$OUT/"
+fi
 chmod 755 "$OUT"/*.sh
 
-tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
-( cd dist && shasum -a 256 "$NAME.tar.gz" > SHA256SUMS )
+if [ "$OS" = darwin ]; then
+  tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+else
+  COPYFILE_DISABLE=1 tar -C dist -czf "dist/$NAME.tar.gz" "$NAME"
+fi
+( cd dist && shasum -a 256 netleash-*.tar.gz > SHA256SUMS )
 echo "OK: dist/$NAME.tar.gz"
 cat dist/SHA256SUMS
 echo

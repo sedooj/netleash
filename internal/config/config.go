@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -40,8 +41,10 @@ type Config struct {
 	ProtectedAppPath string `json:"protectedAppPath"`
 	// ProtectedApps replaces ProtectedAppPath when present, including an explicitly empty list.
 	ProtectedApps []ProtectedApp `json:"protectedApps"`
-	// VPNAppPath is the VPN application whose tunnel interface is the only permitted route.
+	// VPNAppPath is the VPN application whose tunnel interface is the only permitted route (macOS).
 	VPNAppPath string `json:"vpnAppPath"`
+	// VPNInterfaces are the tunnel interface names (shell-style patterns such as "wg*") that count as the VPN (Linux).
+	VPNInterfaces []string `json:"vpnInterfaces"`
 	// EnforceLauncherOnly kills protected-app processes that were not started through the launcher.
 	EnforceLauncherOnly bool `json:"enforceLauncherOnly"`
 	Notify              bool `json:"notify"`
@@ -61,7 +64,12 @@ type Config struct {
 type ProtectedApp struct {
 	Path    string `json:"path"`
 	Enabled bool   `json:"enabled"`
+	// Kind is KindCLI for a command-line program (a file or a directory of executables); empty means an app bundle.
+	Kind string `json:"kind,omitempty"`
 }
+
+// KindCLI marks a command-line profile such as Claude Code in a terminal.
+const KindCLI = "cli"
 
 func (a *ProtectedApp) UnmarshalJSON(data []byte) error {
 	type plain ProtectedApp
@@ -78,17 +86,41 @@ func (c Config) Apps() []ProtectedApp {
 	if c.ProtectedApps != nil {
 		return c.ProtectedApps
 	}
+	if c.ProtectedAppPath == "" {
+		return []ProtectedApp{}
+	}
 	return []ProtectedApp{{Path: c.ProtectedAppPath, Enabled: true}}
 }
 
 // ProtectsExecutable matches bundle boundaries, never similarly named neighboring apps.
 func (c Config) ProtectsExecutable(path string) bool {
 	for _, a := range c.Apps() {
-		if a.Enabled && ValidAppPath(a.Path) && strings.HasPrefix(path, filepath.Clean(a.Path)+"/") {
+		if a.Enabled && a.Matches(path) {
 			return true
 		}
 	}
 	return false
+}
+
+// Matches reports whether the executable path belongs to the profile: inside the app bundle, or the program itself
+// (or anything inside the directory) for a command-line profile.
+func (a ProtectedApp) Matches(path string) bool {
+	if !a.Valid() {
+		return false
+	}
+	base := filepath.Clean(a.Path)
+	if a.Kind == KindCLI {
+		return path == base || strings.HasPrefix(path, base+"/")
+	}
+	return strings.HasPrefix(path, base+"/")
+}
+
+// Valid reports whether the profile is acceptable for the kind it declares.
+func (a ProtectedApp) Valid() bool {
+	if a.Kind == KindCLI {
+		return ValidCLIPath(a.Path)
+	}
+	return ValidAppPath(a.Path)
 }
 
 // ValidAppPath also keeps paths safe to exchange with the installer's line-based interface.
@@ -96,12 +128,69 @@ func ValidAppPath(path string) bool {
 	return filepath.IsAbs(path) && strings.HasSuffix(filepath.Clean(path), ".app") && !strings.ContainsAny(path, "\x00\r\n")
 }
 
+// Directories and interpreters that must never become a command-line profile: the daemon terminates matching
+// processes that were started outside the launcher, so protecting /bin/sh or node would break the whole system.
+var (
+	systemRoots = []string{"/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/lib", "/usr/libexec", "/lib", "/lib64",
+		"/System", "/Library", "/etc", "/boot", "/dev", "/proc", "/sys", "/var", "/private"}
+	interpreters = map[string]bool{"sh": true, "bash": true, "zsh": true, "fish": true, "dash": true, "ksh": true, "csh": true,
+		"tcsh": true, "node": true, "nodejs": true, "deno": true, "bun": true, "python": true, "python3": true, "ruby": true,
+		"perl": true, "php": true, "java": true, "env": true, "sudo": true, "login": true, "launchd": true, "init": true,
+		"systemd": true, "netleash": true, "netleash-exec": true}
+)
+
+// ValidCLIPath accepts an absolute, normalized path to a program or to a directory of programs. System locations,
+// shared containers such as /usr/local/bin, whole home directories and interpreters are refused.
+func ValidCLIPath(path string) bool {
+	if !filepath.IsAbs(path) || strings.ContainsAny(path, "\x00\r\n") || filepath.Clean(path) != path {
+		return false
+	}
+	if len(strings.Split(strings.Trim(path, "/"), "/")) < 3 { // "/", /Users/x, /home/x, /opt/x
+		return false
+	}
+	for _, r := range systemRoots {
+		if path == r || strings.HasPrefix(path, r+"/") {
+			return false
+		}
+	}
+	switch filepath.Base(path) {
+	case "bin", "sbin", "lib", "libexec", "Applications", "Contents", "MacOS":
+		return false
+	}
+	switch path {
+	case "/usr/local", "/usr/local/bin", "/usr/local/sbin", "/usr/local/lib", "/opt/homebrew", "/opt/homebrew/bin":
+		return false
+	}
+	if strings.HasSuffix(path, ".app") || strings.Contains(path, ".app/") || path == LibexecDir || strings.HasPrefix(path, LibexecDir+"/") {
+		return false
+	}
+	return !interpreters[filepath.Base(path)]
+}
+
+// defaultGroup follows each system's naming convention: macOS system groups start with an underscore, Linux
+// tools reject such names.
+func defaultGroup() string {
+	if runtime.GOOS == "linux" {
+		return Name
+	}
+	return "_" + Name
+}
+
+// defaultProtectedApp keeps the historical macOS default; other systems start with nothing protected.
+func defaultProtectedApp() string {
+	if runtime.GOOS == "darwin" {
+		return "/Applications/Claude.app"
+	}
+	return ""
+}
+
 // Default returns the configuration used when no config file exists.
 func Default() Config {
 	return Config{
-		GroupName:               "_" + Name,
-		ProtectedAppPath:        "/Applications/Claude.app",
+		GroupName:               defaultGroup(),
+		ProtectedAppPath:        defaultProtectedApp(),
 		VPNAppPath:              "/Applications/AmneziaVPN.app",
+		VPNInterfaces:           []string{"amn0"},
 		EnforceLauncherOnly:     true,
 		Notify:                  true,
 		LoopbackBlockPorts:      []int{7890, 7891, 7892, 7897, 9090, 9097},

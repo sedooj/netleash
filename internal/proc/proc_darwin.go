@@ -6,6 +6,7 @@ package proc
 import (
 	"bytes"
 	"encoding/binary"
+	"path/filepath"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -69,6 +70,18 @@ func Args(pid int) (string, []string) {
 	return parseProcArgs2(buf)
 }
 
+// realPath resolves symlinks: the kernel reports the path a program was started by, which for a command such as
+// ~/.local/bin/claude is a link to the real file. Profiles are matched against real paths.
+func realPath(path string) string {
+	if path == "" || !filepath.IsAbs(path) {
+		return path
+	}
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
 // List returns all processes. Executable paths are cached per (pid, start time, comm), so repeated calls
 // (the daemon scans every 50 ms) cost one sysctl plus a map lookup per process.
 func List() ([]Proc, error) {
@@ -90,6 +103,7 @@ func List() ([]Proc, error) {
 		path, ok := paths[key]
 		if !ok {
 			path, _ = Args(pid)
+			path = realPath(path)
 		}
 		live[key] = path
 		out = append(out, Proc{PID: pid, GID: k.Eproc.Ucred.Groups[0], Path: path})

@@ -18,7 +18,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="style.css">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Netleash","applicationCategory":"SecurityApplication","operatingSystem":"macOS 26 (Apple Silicon)","softwareVersion":"0.3.0","license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://sedooj.github.io/netleash/","downloadUrl":"https://github.com/sedooj/netleash/releases/latest","codeRepository":"https://github.com/sedooj/netleash","description":"Open-source macOS tool that confines selected applications' network access to a VPN tunnel using the pf firewall; fail-closed when the VPN drops.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Netleash","applicationCategory":"SecurityApplication","operatingSystem":["macOS 26 (Apple Silicon)","Linux (experimental)"],"softwareVersion":"0.4.0","license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://sedooj.github.io/netleash/","downloadUrl":"https://github.com/sedooj/netleash/releases/latest","codeRepository":"https://github.com/sedooj/netleash","description":"Open-source macOS tool that confines selected applications' network access to a VPN tunnel using the pf firewall; fail-closed when the VPN drops.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
 </script>
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
@@ -35,12 +35,12 @@
 </div></header>
 <main class="wrap">
 <h1>Make a Mac app use the internet <em>only</em> through your VPN</h1>
-<p class="lead">Netleash is a free, open-source macOS tool that puts selected apps — Claude, Codex or any <code>.app</code> — on a network leash. They can reach the internet only through the VPN tunnel. If the VPN drops, the kernel cuts them off instantly; when it comes back, they reconnect on their own.</p>
+<p class="lead">Netleash is a free, open-source macOS tool that puts selected apps — Claude, Codex, Claude Code in a terminal or any program — on a network leash. They can reach the internet only through the VPN tunnel. If the VPN drops, the kernel cuts them off instantly; when it comes back, they reconnect on their own.</p>
 <div class="btns">
   <a class="btn primary" href="https://github.com/sedooj/netleash/releases/latest">Download latest release</a>
   <a class="btn" href="https://github.com/sedooj/netleash">View on GitHub</a>
 </div>
-<div class="note"><b>Unofficial, experimental, unaudited.</b> Not affiliated with Anthropic, OpenAI or Amnezia. It installs a root daemon and a setuid helper on your Mac — read the <a href="https://github.com/sedooj/netleash#disclaimer">disclaimer and limitations</a> first. Supported today: AmneziaVPN with its Kill Switch <b>off</b>, macOS 26, Apple Silicon.</div>
+<div class="note"><b>Unofficial, experimental, unaudited.</b> Not affiliated with Anthropic, OpenAI or Amnezia. It installs a root daemon and a setuid helper on your Mac — read the <a href="https://github.com/sedooj/netleash#disclaimer">disclaimer and limitations</a> first. Supported today: AmneziaVPN with its Kill Switch <b>off</b>, macOS 26, Apple Silicon. <b>Linux</b> (amd64, arm64) is available as an experimental build; Windows is planned.</div>
 
 <h2>Why</h2>
 <p>A normal VPN kill switch is all-or-nothing and often races the firewall it reloads. Sometimes you only need <em>one</em> app to never touch your real IP — for example an AI assistant with agents and a built-in browser — while the rest of your Mac keeps working normally. Netleash gives you that per-app kill switch without a Network Extension or a proxy.</p>
@@ -66,8 +66,8 @@ netleash test     # a forced connection via a physical interface must be blocked
 <h2>Requirements</h2>
 <table>
 <tr><th>VPN</th><td>AmneziaVPN, <b>Kill Switch off</b> (it reloads pf non-atomically and would open a leak window)</td></tr>
-<tr><th>System</th><td>macOS 26 (Tahoe), Apple Silicon</td></tr>
-<tr><th>Apps</th><td>Claude and Codex presets, or any original <code>.app</code> bundle</td></tr>
+<tr><th>System</th><td>macOS 26 (Tahoe), Apple Silicon · Linux amd64/arm64 with systemd and nftables (experimental) · Windows: planned</td></tr>
+<tr><th>Apps</th><td>Claude and Codex presets, any original <code>.app</code> bundle, or a command-line program such as Claude Code (<code>netleash apps add-cli claude</code>)</td></tr>
 <tr><th>Not covered</th><td>ICMP, apps launched outside Netleash (they are terminated), a malicious root process</td></tr>
 </table>
 
@@ -75,6 +75,8 @@ netleash test     # a forced connection via a physical interface must be blocked
 <details><summary>How do I make Claude use the internet only through a VPN on a Mac?</summary><p>Install Netleash, add Claude in its window and open Claude from Netleash. Claude and everything it launches then run in the protected group and can only use the VPN tunnel.</p></details>
 <details><summary>What happens when the VPN disconnects?</summary><p>The app loses the network at once. When the VPN is back, connections work again without restarting the app; a response interrupted mid-stream has to be resent.</p></details>
 <details><summary>Is it a per-app kill switch?</summary><p>Yes, for the apps you choose. Everything else keeps its normal connection.</p></details>
+<details><summary>Does it protect Claude Code in the terminal?</summary><p>Yes: <code>netleash apps add-cli claude</code>, then start it with <code>netleash run claude</code> or in <code>netleash shell</code>. A <code>claude</code> started any other way is terminated.</p></details>
+<details><summary>Is there a Linux or Windows version?</summary><p>Linux (amd64 and arm64) is available and experimental: it uses nftables and a systemd service. Windows is planned and needs a separate filtering driver.</p></details>
 <details><summary>Does it work with WireGuard, OpenVPN or other VPNs?</summary><p>Not yet validated. Today only AmneziaVPN is supported; see the <a href="https://github.com/sedooj/netleash/issues">issue tracker</a> to ask for others.</p></details>
 <details><summary>Is it safe?</summary><p>It is experimental and unaudited, and it installs privileged components. The code is small and public; read it, verify releases, and keep the <code>netleash panic</code> rollback in mind.</p></details>
 <details><summary>How do I uninstall it?</summary><p><code>sudo /usr/local/libexec/netleash/uninstall.sh</code></p></details>

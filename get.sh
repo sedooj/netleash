@@ -14,13 +14,19 @@ set -eu
 
 REPO="sedooj/netleash"
 VERSION="${NETLEASH_VERSION:-latest}"
-ASSET="netleash-darwin-arm64.tar.gz"
-DIR="netleash-darwin-arm64"
 
 die() { echo "netleash: $*" >&2; exit 1; }
 
-[ "$(uname -s)" = "Darwin" ] || die "only macOS is supported at the moment"
-[ "$(uname -m)" = "arm64" ] || die "only Apple Silicon (arm64) builds are published at the moment"
+case "$(uname -s)/$(uname -m)" in
+  Darwin/arm64) PLATFORM="darwin-arm64" ;;
+  Linux/x86_64|Linux/amd64) PLATFORM="linux-amd64" ;;
+  Linux/aarch64|Linux/arm64) PLATFORM="linux-arm64" ;;
+  Darwin/*) die "only Apple Silicon (arm64) builds are published for macOS" ;;
+  *) die "unsupported platform $(uname -s)/$(uname -m): macOS (Apple Silicon) and Linux (amd64, arm64) are supported" ;;
+esac
+ASSET="netleash-$PLATFORM.tar.gz"
+DIR="netleash-$PLATFORM"
+if command -v sha256sum >/dev/null 2>&1; then SHA="sha256sum"; else SHA="shasum -a 256"; fi
 
 if [ -n "${NETLEASH_BASE_URL:-}" ]; then
   BASE="$NETLEASH_BASE_URL"
@@ -40,7 +46,7 @@ curl -fsSL "$BASE/SHA256SUMS" -o "$TMP/SHA256SUMS" || die "download failed: $BAS
 echo "Verifying checksum ..."
 EXPECTED="$(grep " $ASSET\$" "$TMP/SHA256SUMS" | awk '{print $1}')"
 [ -n "$EXPECTED" ] || die "no checksum for $ASSET in SHA256SUMS"
-ACTUAL="$(shasum -a 256 "$TMP/$ASSET" | awk '{print $1}')"
+ACTUAL="$($SHA "$TMP/$ASSET" | awk '{print $1}')"
 [ "$EXPECTED" = "$ACTUAL" ] || die "CHECKSUM MISMATCH (expected $EXPECTED, got $ACTUAL) - nothing was installed"
 echo "OK  $ACTUAL"
 

@@ -8,15 +8,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // UpdateApp returns a configuration document with only the app list changed.
 // Keep unknown keys and refuse malformed documents rather than silently replacing settings.
 func UpdateApp(data []byte, action, path string) ([]byte, error) {
-	if !ValidAppPath(path) {
+	return UpdateProfile(data, action, path, "")
+}
+
+// UpdateProfile is UpdateApp for an app bundle (kind "") or a command-line profile (KindCLI); kind only matters
+// when adding, the other actions find the entry by its path.
+func UpdateProfile(data []byte, action, path, kind string) ([]byte, error) {
+	path = filepath.Clean(path)
+	if path == "." || strings.ContainsAny(path, "\x00\r\n") {
 		return nil, fmt.Errorf("invalid application path: %s", path)
 	}
-	path = filepath.Clean(path)
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(data, &doc); err != nil {
 		return nil, err
@@ -30,7 +37,7 @@ func UpdateApp(data []byte, action, path string) ([]byte, error) {
 	}
 	apps := append([]ProtectedApp{}, c.Apps()...)
 	for _, a := range apps {
-		if !ValidAppPath(a.Path) {
+		if !a.Valid() {
 			return nil, fmt.Errorf("invalid configured application path: %s", a.Path)
 		}
 	}
@@ -41,10 +48,16 @@ func UpdateApp(data []byte, action, path string) ([]byte, error) {
 			break
 		}
 	}
+	if index >= 0 {
+		kind = apps[index].Kind // an existing entry decides what it is
+	}
+	if !(ProtectedApp{Path: path, Kind: kind}).Valid() {
+		return nil, fmt.Errorf("invalid application path: %s", path)
+	}
 	switch action {
 	case "add":
 		if index < 0 {
-			apps = append(apps, ProtectedApp{Path: path, Enabled: true})
+			apps = append(apps, ProtectedApp{Path: path, Enabled: true, Kind: kind})
 		}
 	case "enable", "disable":
 		if index < 0 {

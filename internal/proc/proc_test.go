@@ -7,6 +7,7 @@ package proc
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -37,4 +38,28 @@ func TestListFindsSelf(t *testing.T) {
 		}
 	}
 	t.Fatal("own process not listed")
+}
+
+func TestRealPathResolvesSymlinks(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "versions", "1.0.0")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "claude")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if got := realPath(link); got != target {
+		t.Errorf("realPath(%q) = %q, want %q", link, got, target)
+	}
+	if got := realPath("/does/not/exist"); got != "/does/not/exist" {
+		t.Errorf("unresolvable paths stay as they are: %q", got)
+	}
 }

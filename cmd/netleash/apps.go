@@ -35,21 +35,53 @@ func manageApps(args []string) error {
 	}
 	if len(args) == 1 && args[0] == "paths" {
 		for _, a := range c.Apps() {
-			if a.Enabled && config.ValidAppPath(a.Path) {
+			if a.Enabled && a.Kind != config.KindCLI && config.ValidAppPath(a.Path) {
 				fmt.Println(a.Path)
 			}
 		}
 		return nil
 	}
 	if len(args) != 2 {
-		return fmt.Errorf("usage: netleash apps [list|paths|add|enable|disable|remove|launch <app-path>]")
+		return fmt.Errorf("usage: netleash apps [list|paths|add|add-cli|enable|disable|remove|launch <app-path>]")
 	}
-	action, path := args[0], args[1]
-	if !config.ValidAppPath(path) {
+	action, arg := args[0], args[1]
+	kind := ""
+	if action == "add-cli" {
+		action, kind = "add", config.KindCLI
+		if os.Geteuid() != 0 {
+			// Resolve the command in the user's own environment (PATH, symlinks), then ask for administrator access.
+			resolved, note, err := resolveCLI(arg)
+			if err != nil {
+				return err
+			}
+			if note != "" {
+				fmt.Println(note)
+			}
+			self, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			execTool("/usr/bin/sudo", self, "apps", "add-cli", resolved)
+			return nil
+		}
+		if !filepath.IsAbs(arg) {
+			return fmt.Errorf("%s", i18n.T("give an absolute path to the program or its directory (run without sudo to look it up in PATH)"))
+		}
+	}
+	path := filepath.Clean(arg)
+	for _, a := range c.Apps() {
+		if kind == "" && filepath.Clean(a.Path) == path {
+			kind = a.Kind
+		}
+	}
+	profile := config.ProtectedApp{Path: path, Enabled: true, Kind: kind}
+	if !profile.Valid() {
 		return fmt.Errorf("invalid application path: %s", path)
 	}
-	path = filepath.Clean(path)
 	if action == "launch" {
+		if kind == config.KindCLI {
+			return fmt.Errorf("%s", i18n.T("this is a command-line profile: start the program with netleash run <command>"))
+		}
 		found := false
 		for _, a := range c.Apps() {
 			if a.Enabled && a.Path == path {
@@ -106,7 +138,7 @@ func manageApps(args []string) error {
 	if err != nil {
 		return err
 	}
-	updated, err := config.UpdateApp(data, action, path)
+	updated, err := config.UpdateProfile(data, action, path, kind)
 	if err != nil {
 		return err
 	}
@@ -118,15 +150,17 @@ func manageApps(args []string) error {
 		if canonical != path {
 			return fmt.Errorf("select the original application at %s", canonical)
 		}
-		if _, err = appExecutable(path); err != nil {
-			return err
+		if kind != config.KindCLI {
+			if _, err = appExecutable(path); err != nil {
+				return err
+			}
 		}
 		ps, err := proc.List()
 		if err != nil {
 			return err
 		}
 		for _, p := range ps {
-			if !strings.HasPrefix(p.Path, path+"/") {
+			if !profile.Matches(p.Path) {
 				continue
 			}
 			ignored := false
@@ -143,9 +177,9 @@ func manageApps(args []string) error {
 	if err = config.WriteAtomic(config.ConfigPath, updated); err != nil {
 		return err
 	}
-	// Restart without touching pf: existing confined processes remain confined throughout.
-	if out, err := exec.Command("/bin/launchctl", "kickstart", "-k", "system/"+config.DaemonLabel).CombinedOutput(); err != nil {
-		return fmt.Errorf("settings saved, but daemon restart failed: %s: %w", strings.TrimSpace(string(out)), err)
+	// Restart without touching the firewall: existing confined processes remain confined throughout.
+	if err := restartDaemon(); err != nil {
+		return fmt.Errorf("settings saved, but daemon restart failed: %w", err)
 	}
 	var expected config.Config
 	if err = json.Unmarshal(updated, &expected); err != nil {
@@ -193,4 +227,31 @@ func appExecutable(path string) (string, error) {
 		return "", fmt.Errorf("executable is outside the application bundle")
 	}
 	return binary, nil
+}
+
+// resolveCLI turns a command name or path into the profile path: the real file behind any symlinks. Claude Code's
+// installer keeps every release in <dir>/versions/<version> behind a symlink, so the directory is protected instead,
+// otherwise an update would silently move the program out of its profile.
+func resolveCLI(arg string) (path, note string, err error) {
+	p := arg
+	if !strings.Contains(p, "/") {
+		if p, err = exec.LookPath(arg); err != nil {
+			return "", "", fmt.Errorf("%s", i18n.T("command not found: %s", arg))
+		}
+	}
+	if p, err = filepath.Abs(p); err != nil {
+		return "", "", err
+	}
+	if p, err = filepath.EvalSymlinks(p); err != nil {
+		return "", "", err
+	}
+	if filepath.Base(filepath.Dir(p)) == "versions" {
+		dir := filepath.Dir(filepath.Dir(p))
+		note = i18n.T("Protecting the whole directory %s so that updates stay protected.", dir)
+		p = dir
+	}
+	if !config.ValidCLIPath(p) {
+		return "", "", fmt.Errorf("%s", i18n.T("this program cannot be protected by path: %s", p))
+	}
+	return p, note, nil
 }

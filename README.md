@@ -29,7 +29,8 @@ The VPN mechanism and its existing validation remain the same:
 | Protected applications | Original **Claude** and **Codex** desktop bundles, plus any `.app` selected in the applications window. Multiple apps can be enabled together; Claude remains the legacy default |
 | VPN | **AmneziaVPN** (`/Applications/AmneziaVPN.app`, tested with 5.x) |
 | AmneziaVPN **Kill Switch** | **must be OFF** (see [why](#why-the-amnezia-kill-switch-must-be-off)) |
-| OS | macOS 26 (Tahoe), Apple Silicon (arm64). Other versions and Intel Macs are untested |
+| OS | macOS 26 (Tahoe), Apple Silicon (arm64). Other versions and Intel Macs are untested. **Linux (amd64, arm64) is experimental**, see [Linux](#linux-experimental); Windows is not supported yet |
+| Command-line programs | Claude Code in a terminal and any other program, see [Command-line programs](#command-line-programs-claude-code) |
 
 Codex and custom apps are configurable, but their live VPN behaviour has not yet been validated. The previous
 upstream validation covers Claude + AmneziaVPN on macOS 26 / Apple Silicon. Keep the limitations below in mind.
@@ -64,6 +65,45 @@ There is an unprotected window before termination; this is not a transparent fir
 Turning protection off or removing an app stops enforcing future launches. Already confined processes retain their
 restricted group: quit and reopen the app normally to remove confinement. Other enabled apps stay protected.
 You can also remove all protection temporarily using **Emergency rollback** or `netleash panic`.
+
+## Command-line programs (Claude Code)
+
+A command-line program is protected like an app bundle: it is started through Netleash, and the daemon terminates it when
+it is started any other way. Add it once (asks for administrator access; quit the program first):
+
+```bash
+netleash apps add-cli claude        # looks "claude" up in PATH; for Claude Code the whole install directory is protected
+netleash run claude                 # run it confined (a bare name is looked up in PATH)
+netleash shell                      # or open a shell in which every command is confined
+```
+
+To make plain `claude` always go through Netleash, add `alias claude='netleash run claude'` to your shell profile.
+Claude Code keeps every release in `<dir>/versions/<version>` behind a symlink, so Netleash protects `<dir>`: an update
+stays protected. Running `claude` from an ordinary terminal (not through Netleash) then terminates it within about 50 ms.
+
+Limits: profiles match the program's real executable path, so interpreters (`node`, `python`, shells) and system
+directories are refused. A Claude Code installed through npm runs as `node` and can only be protected with
+`netleash run`/`netleash shell`, without forced launching. The Netleash app's window lists app bundles only;
+manage command-line profiles with `netleash apps` (`apps remove <path>` to remove one).
+
+## Linux (experimental)
+
+Linux builds (amd64, arm64) use the same daemon and helper. Differences: the confined group `netleash` is matched by
+nftables (`meta skgid`), the daemon is a systemd service, there is no menu bar app, and the VPN is a tunnel interface
+that you name in `/usr/local/etc/netleash/config.json` (`"vpnInterfaces": ["amn0"]`, patterns such as `"wg*"` work; the
+default `amn0` is what AmneziaVPN's WireGuard-based protocols use, other VPNs are not validated). Requirements: systemd, `nftables`
+(the `nft` command), and `curl` for `netleash test`. Fail-closed as on macOS: the accept rule is bound to the interface
+name, so when the tunnel disappears the kernel drops the traffic. Install with the one-liner below; then:
+
+```bash
+sudo netleash apps add-cli claude && netleash run claude
+```
+
+Status: verified by an automated end-to-end test in a privileged container with the real Linux kernel (VPN interface
+appears and disappears, unprotected launch is terminated, ruleset restored after `nft flush ruleset`, panic/resume),
+**not yet on physical machines with a real VPN**. Known limits: `nft flush ruleset` removes our table for up to half a second;
+ICMP of other programs is untouched; DNS resolvers outside the group (systemd-resolved) are controlled by the DNS rules
+as on macOS, but their VPN DNS servers must be listed in `vpnDnsServers`.
 
 ## Install
 
@@ -292,8 +332,7 @@ Not implemented yet; nothing below is supported today:
 
 - other VPN software and plain WireGuard/OpenVPN tunnels (generic "tunnel is up" detection);
 - support with the Amnezia kill switch enabled (a layer that survives `pf` reloads);
-- other operating systems (the core is Go with the platform-specific parts isolated; Linux would use a different
-  firewall backend);
+- Windows (needs a WFP filtering driver and a service: a separate stage) and validation of Linux on physical machines;
 - notarized releases, more automated tests, more languages.
 
 ## Contributing & security

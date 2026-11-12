@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -18,11 +19,11 @@ func TestAppListMigrationAndToggles(t *testing.T) {
 		action, path string
 		want         []ProtectedApp
 	}{
-		{"add", "/Applications/Codex.app", []ProtectedApp{{"/Applications/Legacy.app", true}, {"/Applications/Codex.app", true}}},
-		{"add", "/Applications/Codex.app", []ProtectedApp{{"/Applications/Legacy.app", true}, {"/Applications/Codex.app", true}}},
-		{"disable", "/Applications/Codex.app", []ProtectedApp{{"/Applications/Legacy.app", true}, {"/Applications/Codex.app", false}}},
-		{"enable", "/Applications/Codex.app", []ProtectedApp{{"/Applications/Legacy.app", true}, {"/Applications/Codex.app", true}}},
-		{"remove", "/Applications/Legacy.app", []ProtectedApp{{"/Applications/Codex.app", true}}},
+		{"add", "/Applications/Codex.app", []ProtectedApp{{Path: "/Applications/Legacy.app", Enabled: true}, {Path: "/Applications/Codex.app", Enabled: true}}},
+		{"add", "/Applications/Codex.app", []ProtectedApp{{Path: "/Applications/Legacy.app", Enabled: true}, {Path: "/Applications/Codex.app", Enabled: true}}},
+		{"disable", "/Applications/Codex.app", []ProtectedApp{{Path: "/Applications/Legacy.app", Enabled: true}, {Path: "/Applications/Codex.app", Enabled: false}}},
+		{"enable", "/Applications/Codex.app", []ProtectedApp{{Path: "/Applications/Legacy.app", Enabled: true}, {Path: "/Applications/Codex.app", Enabled: true}}},
+		{"remove", "/Applications/Legacy.app", []ProtectedApp{{Path: "/Applications/Codex.app", Enabled: true}}},
 		{"remove", "/Applications/Codex.app", []ProtectedApp{}},
 	} {
 		data, err = UpdateApp(data, step.action, step.path)
@@ -48,6 +49,7 @@ func TestAppListMigrationAndToggles(t *testing.T) {
 
 func TestApplicationMatching(t *testing.T) {
 	c := Default()
+	c.ProtectedAppPath = "/Applications/Claude.app" // the legacy single-app setting (the default only on macOS)
 	if !c.ProtectsExecutable("/Applications/Claude.app/Contents/MacOS/Claude") {
 		t.Fatal("legacy app lost")
 	}
@@ -106,5 +108,64 @@ func TestAtomicAppSettings(t *testing.T) {
 	fi, err := os.Stat(path)
 	if err != nil || fi.Mode().Perm() != 0o644 {
 		t.Fatalf("unexpected config permissions: %v %v", fi, err)
+	}
+}
+
+func TestCLIProfileMatching(t *testing.T) {
+	file := ProtectedApp{Path: "/home/u/bin/claude", Enabled: true, Kind: KindCLI}
+	dir := ProtectedApp{Path: "/home/u/.local/share/claude", Enabled: true, Kind: KindCLI}
+	for _, tc := range []struct {
+		a    ProtectedApp
+		path string
+		want bool
+	}{
+		{file, "/home/u/bin/claude", true},
+		{file, "/home/u/bin/claude-other", false},
+		{file, "/home/u/bin/claude/x", true},
+		{dir, "/home/u/.local/share/claude/versions/2.1.0", true},
+		{dir, "/home/u/.local/share/claude-evil/x", false},
+		{dir, "/bin/sh", false},
+	} {
+		if got := tc.a.Matches(tc.path); got != tc.want {
+			t.Errorf("%+v matches %q = %v, want %v", tc.a, tc.path, got, tc.want)
+		}
+	}
+	app := ProtectedApp{Path: "/Applications/Claude.app", Enabled: true}
+	if !app.Matches("/Applications/Claude.app/Contents/MacOS/Claude") || app.Matches("/Applications/Claude.app") {
+		t.Error("app bundles match their contents only")
+	}
+}
+
+// A command-line profile must never be able to swallow system programs or whole shared directories: the daemon
+// terminates matching processes that were started outside the launcher.
+func TestCLIProfileRefusesDangerousPaths(t *testing.T) {
+	for _, p := range []string{"/", "/bin/sh", "/usr/bin/curl", "/usr/bin", "/usr/local/bin", "/usr/local", "/opt", "/opt/homebrew/bin",
+		"/Users/x", "/home/x", "/root", "/Applications/Claude.app", "/Users/x/Applications", "/opt/x/node", "/home/x/bin/bash",
+		"relative/claude", "/home/x/../y/claude", "/home/x/claude\n", "/System/Library/x", "/var/lib/x", "/usr/local/libexec/netleash/netleash"} {
+		if ValidCLIPath(p) {
+			t.Errorf("%q must be refused", p)
+		}
+	}
+	for _, p := range []string{"/home/x/.local/share/claude", "/Users/x/.local/bin/claude", "/opt/claude/claude", "/usr/local/bin/claude"} {
+		if !ValidCLIPath(p) {
+			t.Errorf("%q must be accepted", p)
+		}
+	}
+}
+
+func TestUpdateProfileAddsCLI(t *testing.T) {
+	out, err := UpdateProfile([]byte(`{"protectedApps":[]}`), "add", "/home/x/.local/share/claude", KindCLI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c Config
+	if err := json.Unmarshal(out, &c); err != nil || len(c.Apps()) != 1 || c.Apps()[0].Kind != KindCLI {
+		t.Fatalf("%s %v", out, err)
+	}
+	if _, err := UpdateProfile(out, "add", "/bin/sh", KindCLI); err == nil {
+		t.Error("system programs must be refused")
+	}
+	if out, err = UpdateProfile(out, "disable", "/home/x/.local/share/claude", ""); err != nil || !strings.Contains(string(out), `"enabled": false`) {
+		t.Errorf("disable must find the entry by path: %s %v", out, err)
 	}
 }

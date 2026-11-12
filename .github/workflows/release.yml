@@ -21,14 +21,22 @@ jobs:
           base="${GITHUB_REF_NAME%%-*}"
           [ "$base" = "$want" ] || { echo "tag $GITHUB_REF_NAME does not match VERSION ($want)"; exit 1; }
       - name: Build
-        run: NETLEASH_RELEASE=1 ./build.sh
+        run: |
+          NETLEASH_RELEASE=1 ./build.sh
+          for arch in amd64 arm64; do
+            NETLEASH_RELEASE=1 NETLEASH_OS=linux NETLEASH_ARCH=$arch NETLEASH_KEEP_DIST=1 ./build.sh
+          done
+          cat dist/SHA256SUMS
       - name: Installer self-check
         run: NETLEASH_BASE_URL="file://$PWD/dist" NETLEASH_DRY_RUN=1 sh get.sh
       - name: Attest build provenance
         if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v4
         with:
-          subject-path: dist/netleash-darwin-arm64.tar.gz
+          subject-path: |
+            dist/netleash-darwin-arm64.tar.gz
+            dist/netleash-linux-amd64.tar.gz
+            dist/netleash-linux-arm64.tar.gz
       - name: Release notes
         run: |
           v="${GITHUB_REF_NAME#v}"
@@ -41,7 +49,7 @@ jobs:
             echo "curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/get.sh | sh"
             echo '```'
             echo "The installer verifies the SHA-256 checksum. To check and read everything first, see *Install, option 2* in the README."
-            echo "Supported: Claude + AmneziaVPN (Kill Switch off), macOS 26, Apple Silicon. Experimental and unaudited."
+            echo "Supported: macOS 26 (Apple Silicon) with AmneziaVPN (Kill Switch off); Linux (amd64, arm64) is experimental. Unofficial and unaudited."
           } > body.md
       - name: Publish release
         env:
@@ -50,4 +58,4 @@ jobs:
           flags=""
           case "$GITHUB_REF_NAME" in *-*) flags="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" $flags --verify-tag --title "$GITHUB_REF_NAME" --notes-file body.md --generate-notes \
-            dist/netleash-darwin-arm64.tar.gz dist/SHA256SUMS get.sh
+            dist/netleash-darwin-arm64.tar.gz dist/netleash-linux-amd64.tar.gz dist/netleash-linux-arm64.tar.gz dist/SHA256SUMS get.sh

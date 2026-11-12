@@ -18,7 +18,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="stylesheet" href="../style.css">
 <script type="application/ld+json">
-{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Netleash","inLanguage":"ru","applicationCategory":"SecurityApplication","operatingSystem":"macOS 26 (Apple Silicon)","softwareVersion":"0.3.0","license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://sedooj.github.io/netleash/ru/","downloadUrl":"https://github.com/sedooj/netleash/releases/latest","codeRepository":"https://github.com/sedooj/netleash","description":"Утилита с открытым кодом для macOS: ограничивает сеть выбранных приложений туннелем VPN через фаервол pf; при обрыве VPN сеть блокируется.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Netleash","inLanguage":"ru","applicationCategory":"SecurityApplication","operatingSystem":["macOS 26 (Apple Silicon)","Linux (экспериментально)"],"softwareVersion":"0.4.0","license":"https://www.gnu.org/licenses/gpl-3.0.html","url":"https://sedooj.github.io/netleash/ru/","downloadUrl":"https://github.com/sedooj/netleash/releases/latest","codeRepository":"https://github.com/sedooj/netleash","description":"Утилита с открытым кодом для macOS: ограничивает сеть выбранных приложений туннелем VPN через фаервол pf; при обрыве VPN сеть блокируется.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
 </script>
 <script type="application/ld+json">
 {"@context":"https://schema.org","@type":"FAQPage","inLanguage":"ru","mainEntity":[
@@ -35,12 +35,12 @@
 </div></header>
 <main class="wrap">
 <h1>Пусть приложение на Mac выходит в интернет <em>только</em> через VPN</h1>
-<p class="lead">Netleash — бесплатная утилита с открытым кодом для macOS, которая сажает выбранные приложения (Claude, Codex или любой <code>.app</code>) на сетевой поводок. Они выходят в интернет только через туннель VPN. VPN оборвался — ядро мгновенно отключает им сеть; вернулся — они подключаются сами.</p>
+<p class="lead">Netleash — бесплатная утилита с открытым кодом для macOS, которая сажает выбранные приложения (Claude, Codex, Claude Code в терминале или любую программу) на сетевой поводок. Они выходят в интернет только через туннель VPN. VPN оборвался — ядро мгновенно отключает им сеть; вернулся — они подключаются сами.</p>
 <div class="btns">
   <a class="btn primary" href="https://github.com/sedooj/netleash/releases/latest">Скачать последний релиз</a>
   <a class="btn" href="https://github.com/sedooj/netleash/blob/main/README.ru.md">Открыть на GitHub</a>
 </div>
-<div class="note"><b>Неофициальный, экспериментальный, без аудита.</b> Не связан с Anthropic, OpenAI и Amnezia. Устанавливает root-демон и setuid-помощника — сначала прочитайте <a href="https://github.com/sedooj/netleash/blob/main/README.ru.md">отказ от ответственности и ограничения</a>. Сейчас поддерживается: AmneziaVPN с <b>выключенным</b> Kill Switch, macOS 26, Apple Silicon.</div>
+<div class="note"><b>Неофициальный, экспериментальный, без аудита.</b> Не связан с Anthropic, OpenAI и Amnezia. Устанавливает root-демон и setuid-помощника — сначала прочитайте <a href="https://github.com/sedooj/netleash/blob/main/README.ru.md">отказ от ответственности и ограничения</a>. Сейчас поддерживается: AmneziaVPN с <b>выключенным</b> Kill Switch, macOS 26, Apple Silicon. Для <b>Linux</b> (amd64, arm64) есть экспериментальная сборка; Windows в планах.</div>
 
 <h2>Зачем</h2>
 <p>Обычный kill switch у VPN — «всё или ничего», и он часто гонится с фаерволом, который перезагружает. Иногда нужно, чтобы <em>одно</em> приложение никогда не показало ваш настоящий IP — например, ИИ-ассистент с агентами и встроенным браузером, — а остальной Mac работал как обычно. Netleash даёт такой kill switch для отдельных приложений без Network Extension и без прокси.</p>
@@ -66,8 +66,8 @@ netleash test     # принудительное соединение через
 <h2>Требования</h2>
 <table>
 <tr><th>VPN</th><td>AmneziaVPN, <b>Kill Switch выключен</b> (он перезагружает pf не атомарно и открывает окно утечки)</td></tr>
-<tr><th>Система</th><td>macOS 26 (Tahoe), Apple Silicon</td></tr>
-<tr><th>Приложения</th><td>Пресеты Claude и Codex или любой оригинальный пакет <code>.app</code></td></tr>
+<tr><th>Система</th><td>macOS 26 (Tahoe), Apple Silicon · Linux amd64/arm64 с systemd и nftables (экспериментально) · Windows: в планах</td></tr>
+<tr><th>Приложения</th><td>Пресеты Claude и Codex, любой оригинальный пакет <code>.app</code> или консольная программа вроде Claude Code (<code>netleash apps add-cli claude</code>)</td></tr>
 <tr><th>Не покрыто</th><td>ICMP, приложения, запущенные мимо Netleash (они завершаются), вредоносный процесс с правами root</td></tr>
 </table>
 
@@ -75,6 +75,8 @@ netleash test     # принудительное соединение через
 <details><summary>Как сделать, чтобы Claude на Mac выходил в интернет только через VPN?</summary><p>Установите Netleash, добавьте Claude в его окне и открывайте Claude через Netleash. Claude и всё, что он запускает, работают в защищённой группе и могут использовать только туннель VPN.</p></details>
 <details><summary>Что будет, если VPN отключится?</summary><p>Приложение сразу теряет сеть. Когда VPN вернётся, соединения заработают без перезапуска приложения; ответ, оборванный на середине, придётся отправить заново.</p></details>
 <details><summary>Это kill switch для отдельных приложений?</summary><p>Да, для выбранных вами. Всё остальное работает как обычно.</p></details>
+<details><summary>Защищает ли он Claude Code в терминале?</summary><p>Да: <code>netleash apps add-cli claude</code>, затем запускайте через <code>netleash run claude</code> или в <code>netleash shell</code>. <code>claude</code>, запущенный иначе, завершается.</p></details>
+<details><summary>Есть версия для Linux или Windows?</summary><p>Linux (amd64 и arm64) есть, она экспериментальная: nftables и служба systemd. Windows в планах, ему нужен отдельный фильтрующий драйвер.</p></details>
 <details><summary>Работает с WireGuard, OpenVPN и другими VPN?</summary><p>Пока не проверено. Сейчас поддерживается только AmneziaVPN; другие можно запросить в <a href="https://github.com/sedooj/netleash/issues">трекере задач</a>.</p></details>
 <details><summary>Это безопасно?</summary><p>Проект экспериментальный и без аудита, и он ставит привилегированные компоненты. Код небольшой и открытый: прочитайте его, проверяйте релизы и помните про аварийный откат <code>netleash panic</code>.</p></details>
 <details><summary>Как удалить?</summary><p><code>sudo /usr/local/libexec/netleash/uninstall.sh</code></p></details>

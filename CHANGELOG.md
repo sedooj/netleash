@@ -3,6 +3,24 @@
 Versions follow [Semantic Versioning](https://semver.org). The version of a release is the content of the `VERSION`
 file and the git tag `vX.Y.Z`; local builds are marked `X.Y.Z-dev+<commit>`.
 
+## Unreleased
+
+- **Linux support (experimental).** The same daemon, CLI and setuid helper now run on Linux (amd64 and arm64): the
+  confined group is matched by nftables (`meta skgid`), the daemon is a systemd service, the VPN is a tunnel interface
+  named in `vpnInterfaces` (default `amn0`; patterns such as `wg*` work). Fail-closed like on macOS: the accept rule is
+  bound to the interface name. The ruleset is restored within 0.5 s if something flushes nftables. Release archives
+  `netleash-linux-amd64.tar.gz` and `netleash-linux-arm64.tar.gz`; `get.sh` and `netleash update` detect the platform.
+  Verified by an end-to-end test in a privileged container (`test/linux/run.sh`), not yet on a physical machine with a
+  real VPN.
+- **Command-line programs.** `netleash apps add-cli claude` protects Claude Code in a terminal (or any program):
+  `netleash run claude` and the new `netleash shell` run it confined, and the daemon terminates the program when it is
+  started outside Netleash, as for app bundles. For Claude Code the whole install directory is protected, so updates
+  stay protected. System programs, interpreters and shared directories are refused as profiles.
+- `netleash run` now finds commands in `PATH`.
+- macOS: executable paths are resolved through symlinks before matching, so a command started through a link such as
+  `~/.local/bin/claude` is recognised.
+- The macOS daemon code moved to `platform_darwin.go` unchanged; no change in macOS behaviour.
+
 ## 0.3.0 — 2026-11-04
 
 - Configurable protected app list: add Claude, Codex, or another original app bundle in the applications window, enable/disable

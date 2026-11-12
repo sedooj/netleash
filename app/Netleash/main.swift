@@ -59,7 +59,7 @@ func protectedApplications() -> [ProtectedApplication] {
     let doc = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
     if let apps = doc["protectedApps"] as? [[String: Any]] {
         return apps.compactMap { a in
-            guard let path = a["path"] as? String else { return nil }
+            guard let path = a["path"] as? String, a["kind"] as? String != "cli" else { return nil }   // command-line profiles are managed with `netleash apps`
             return ProtectedApplication(path: path, enabled: a["enabled"] as? Bool ?? true)
         }
     }

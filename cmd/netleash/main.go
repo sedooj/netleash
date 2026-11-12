@@ -67,7 +67,9 @@ func main() {
 			fmt.Fprint(os.Stderr, i18n.UsageMain())
 			os.Exit(64)
 		}
-		execTool(helperPath, os.Args[2:]...)
+		cmdRun(os.Args[2:])
+	case "shell":
+		cmdShell()
 	case "version", "--version", "-v":
 		fmt.Println(versionString())
 	case "help", "--help", "-h":

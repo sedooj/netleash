@@ -41,6 +41,15 @@ func LatestURL() string { return "https://api.github.com/repos/" + Repo + "/rele
 // AssetName is the release archive for a platform, e.g. netleash-darwin-arm64.tar.gz.
 func AssetName(goos, goarch string) string { return fmt.Sprintf("netleash-%s-%s.tar.gz", goos, goarch) }
 
+// Supported reports whether release archives are published for the platform.
+func Supported(goos, goarch string) bool {
+	switch goos + "/" + goarch {
+	case "darwin/arm64", "linux/amd64", "linux/arm64":
+		return true
+	}
+	return false
+}
+
 // DownloadURL is the URL of a release asset.
 func DownloadURL(tag, asset string) string {
 	return "https://github.com/" + Repo + "/releases/download/" + tag + "/" + asset
