@@ -3,7 +3,7 @@
 Versions follow [Semantic Versioning](https://semver.org). The version of a release is the content of the `VERSION`
 file and the git tag `vX.Y.Z`; local builds are marked `X.Y.Z-dev+<commit>`.
 
-## Unreleased
+## 0.4.0 — 2026-11-12
 
 - **Linux support (experimental).** The same daemon, CLI and setuid helper now run on Linux (amd64 and arm64): the
   confined group is matched by nftables (`meta skgid`), the daemon is a systemd service, the VPN is a tunnel interface
